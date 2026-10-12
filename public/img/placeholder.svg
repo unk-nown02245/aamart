@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400">
+  <rect width="400" height="400" fill="#f1f3f6"/>
+  <rect x="90" y="110" width="220" height="180" rx="16" fill="#ffffff" stroke="#d5d9e0" stroke-width="3"/>
+  <circle cx="150" cy="165" r="22" fill="#dfe3e8"/>
+  <path d="M110 270 l70 -80 55 60 45 -50 50 70 z" fill="#dfe3e8"/>
+  <text x="200" y="330" font-family="Arial" font-size="22" fill="#9aa3af" text-anchor="middle">AAMART</text>
+</svg>

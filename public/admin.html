@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AAMART Admin Panel</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='18' fill='%23172337'/%3E%3Ctext x='50' y='70' font-size='58' font-family='Arial' font-weight='bold' fill='white' text-anchor='middle'%3EA%3C/text%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="/style.css" />
+  <link rel="stylesheet" href="/admin.css" />
+</head>
+<body class="admin-body">
+
+  <div id="splash" class="splash">
+    <div class="splash-inner">
+      <div class="splash-logo">AA<em>MART</em></div>
+      <div class="splash-tag">Admin Panel</div>
+      <div class="splash-bar"><span></span></div>
+    </div>
+  </div>
+
+  <!-- LOGIN -->
+  <div id="loginView" class="login-wrap">
+    <form class="login-card" onsubmit="return doLogin(event)">
+      <div class="login-logo">AAMART</div>
+      <p class="login-tag">Admin Panel Login</p>
+      <div class="field"><label>Username</label><input id="loginUser" value="admin" autocomplete="username" /></div>
+      <div class="field"><label>Password</label><input id="loginPass" type="password" autocomplete="current-password" /></div>
+      <button class="primary-btn full" type="submit">Login</button>
+      <p id="loginError" class="login-error"></p>
+    </form>
+  </div>
+
+  <!-- APP -->
+  <div id="appView" class="admin-layout" style="display:none">
+    <aside class="sidebar">
+      <div class="side-brand">AAMART<span>admin</span></div>
+      <nav class="side-nav">
+        <button class="side-link active" data-tab="dashboard" onclick="switchTab('dashboard')">&#128202; Dashboard</button>
+        <button class="side-link" data-tab="products" onclick="switchTab('products')">&#128230; Products</button>
+        <button class="side-link" data-tab="orders" onclick="switchTab('orders')">&#128179; Orders</button>
+        <a class="side-link" href="/" target="_blank">&#127760; View Store</a>
+      </nav>
+      <div class="side-foot">
+        <span id="adminName">admin</span>
+        <button class="logout-btn" onclick="logout()">Logout</button>
+      </div>
+    </aside>
+
+    <main class="admin-main">
+      <!-- Dashboard -->
+      <section id="tab-dashboard" class="tab">
+        <h1>Dashboard</h1>
+        <div class="stat-grid">
+          <div class="stat-card"><p>Total Products</p><h2 id="statProducts">0</h2></div>
+          <div class="stat-card"><p>Total Orders</p><h2 id="statOrders">0</h2></div>
+          <div class="stat-card"><p>Revenue</p><h2 id="statRevenue">&#8377;0</h2></div>
+          <div class="stat-card"><p>Out of Stock</p><h2 id="statOos">0</h2></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h3>Recent Orders</h3><button class="ghost-btn" onclick="switchTab('orders')">View all</button></div>
+          <div id="recentOrders"></div>
+        </div>
+      </section>
+
+      <!-- Products -->
+      <section id="tab-products" class="tab" style="display:none">
+        <div class="head-row">
+          <h1>Products</h1>
+          <button class="primary-btn" onclick="openProductForm()">+ Add Product</button>
+        </div>
+        <div class="panel">
+          <table class="table">
+            <thead><tr><th>Product</th><th>Category</th><th>Price</th><th>Stock</th><th>Rating</th><th></th></tr></thead>
+            <tbody id="productTable"></tbody>
+          </table>
+          <p id="noProducts" class="empty" style="display:none">No products yet. Click "Add Product" to create one.</p>
+        </div>
+      </section>
+
+      <!-- Orders -->
+      <section id="tab-orders" class="tab" style="display:none">
+        <h1>Orders</h1>
+        <div class="panel">
+          <table class="table">
+            <thead><tr><th>Order ID</th><th>Customer</th><th>Items</th><th>Total</th><th>Status</th></tr></thead>
+            <tbody id="orderTable"></tbody>
+          </table>
+          <p id="noOrders" class="empty" style="display:none">No orders yet.</p>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Product form modal -->
+  <div class="modal-overlay" id="modal" onclick="if(event.target===this)closeModal()">
+    <div class="modal" id="modalBox"></div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script src="/admin.js"></script>
+</body>
+</html>

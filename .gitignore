@@ -1,0 +1,7 @@
+node_modules/
+.env
+*.log
+
+# Local runtime data (privacy) - regenerated automatically on the server
+data/users.json
+data/orders.json

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400">
+  <rect width="400" height="400" fill="#f1f3f6"/>
+  <circle cx="200" cy="200" r="150" fill="#ffffff"/>
+  <rect x="168" y="60" width="64" height="70" rx="14" fill="#172337"/>
+  <rect x="168" y="270" width="64" height="70" rx="14" fill="#172337"/>
+  <rect x="130" y="110" width="140" height="180" rx="34" fill="#172337"/>
+  <rect x="144" y="124" width="112" height="152" rx="24" fill="#0b1220"/>
+  <text x="200" y="185" font-family="Arial" font-size="34" font-weight="bold" fill="#2874f0" text-anchor="middle">10:24</text>
+  <path d="M200 205 l-16 26 h22 l-10 26 30 -36 h-20 l12 -16 z" fill="#ff6161"/>
+  <text x="200" y="368" font-family="Arial" font-size="24" font-weight="bold" fill="#172337" text-anchor="middle">AAMART Fit Watch</text>
+</svg>

@@ -1,0 +1,13 @@
+{
+  "name": "aamart",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AAMART - zero-dependency Node.js e-commerce store with admin panel",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
