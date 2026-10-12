@@ -79,3 +79,5 @@ body.admin-body { background: #eef1f5; }
   .form-grid { grid-template-columns: 1fr; }
   .table { display: block; overflow-x: auto; }
 }
+
+.pill-COD { background: #e8f5e9; color: #2e7d32; }

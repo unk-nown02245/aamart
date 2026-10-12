@@ -247,9 +247,10 @@ async function loadOrders() {
   $("orderTable").innerHTML = orders.map((o) => `
     <tr>
       <td><b>${esc(o.id)}</b><br><small style="color:var(--muted)">${new Date(o.createdAt).toLocaleString()}</small></td>
-      <td>${esc(o.customer.name || "Guest")}<br><small style="color:var(--muted)">${esc(o.customer.phone || "")}</small></td>
+      <td>${esc(o.customer.name || "Guest")}<br><small style="color:var(--muted)">${esc(o.customer.phone || "")}</small><br><small style="color:#666">${esc(o.customer.address || "")}</small></td>
       <td>${o.items.map((i) => `${esc(i.name)} x${i.qty}`).join("<br>")}</td>
       <td><b>${money(o.total)}</b></td>
+      <td><span class="pill pill-COD">${esc(o.payment || "COD")}</span></td>
       <td>
         <select class="status-select" onchange="setStatus('${o.id}', this.value)">
           ${["Placed", "Shipped", "Delivered", "Cancelled"].map((s) => `<option ${s === o.status ? "selected" : ""}>${s}</option>`).join("")}

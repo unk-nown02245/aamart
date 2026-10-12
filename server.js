@@ -568,6 +568,7 @@ async function handleApi(req, res, pathname, parsed) {
       id: "ORD-" + id().toUpperCase().slice(0, 8),
       items,
       total,
+      payment: "COD",
       customer: {
         name: (body.customer && body.customer.name) || "",
         phone: (body.customer && body.customer.phone) || "",

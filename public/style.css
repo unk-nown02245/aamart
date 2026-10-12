@@ -367,3 +367,7 @@ button { font-family: inherit; cursor: pointer; }
 /* FAQs inside My Profile */
 .pfaq { margin-top: 36px; border-top: 1px solid #eef0f3; padding-top: 22px; }
 .pfaq h2 { margin: 0 0 16px; font-size: 20px; color: var(--navy); }
+
+/* COD note in checkout */
+.cod-note { background: #f0f7f0; border: 1px solid #cde8cd; color: #1e5c1e; border-radius: 6px; padding: 10px 12px; font-size: 13px; margin: 6px 0 14px; line-height: 1.5; }
+.cod-note span { color: #4a7a4a; font-size: 12px; }

@@ -192,8 +192,9 @@ function checkout() {
       <div class="field"><label>Full Name</label><input id="cName" placeholder="Your name" /></div>
       <div class="field"><label>Phone</label><input id="cPhone" placeholder="10-digit mobile" /></div>
       <div class="field"><label>Address</label><textarea id="cAddr" rows="3" placeholder="House, street, city, pincode"></textarea></div>
-      <div class="cart-total"><span>Total</span><strong>${money(cartTotal())}</strong></div>
-      <button class="primary-btn full" onclick="placeOrder()">Confirm Order</button>
+      <div class="cod-note">&#128181; Payment Method: <b>Cash on Delivery (COD)</b><br><span>Order ki delivery ke waqt payment karein. Online payment jald aa raha hai.</span></div>
+      <div class="cart-total"><span>Total to pay on delivery</span><strong>${money(cartTotal())}</strong></div>
+      <button class="primary-btn full" onclick="placeOrder()">Place Order (COD)</button>
     </div>`;
   $("modal").classList.add("show");
 }
@@ -222,7 +223,8 @@ async function placeOrder() {
         <div style="font-size:52px">&#9989;</div>
         <h2 style="margin:10px 0">Order Placed!</h2>
         <p style="color:#878787">Your order id is <b>${esc(order.id)}</b></p>
-        <p>Total paid: <b>${money(order.total)}</b></p>
+        <p>Payment: <b>Cash on Delivery</b></p>
+        <p>Amount to pay on delivery: <b>${money(order.total)}</b></p>
         <button class="primary-btn" onclick="closeModal()">Continue Shopping</button>
       </div>`;
     $("modal").classList.add("show");
