@@ -7,7 +7,6 @@ const PORT = process.env.PORT || 4000;
 const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, "public");
 const DATA_DIR = path.join(ROOT, "data");
-const SECRET = process.env.AAMART_SECRET || "AAMART-change-this-secret-key";
 
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
@@ -15,6 +14,21 @@ const PRODUCTS_FILE = path.join(DATA_DIR, "products.json");
 const ORDERS_FILE = path.join(DATA_DIR, "orders.json");
 const ADMIN_FILE = path.join(DATA_DIR, "admin.json");
 const USERS_FILE = path.join(DATA_DIR, "users.json");
+const SECRET_FILE = path.join(DATA_DIR, "secret.json");
+const BACKUP_DIR = path.join(DATA_DIR, "backups");
+if (!fs.existsSync(BACKUP_DIR)) fs.mkdirSync(BACKUP_DIR, { recursive: true });
+
+function loadSecret() {
+  if (process.env.AAMART_SECRET) return String(process.env.AAMART_SECRET);
+  try {
+    const s = JSON.parse(fs.readFileSync(SECRET_FILE, "utf8"));
+    if (s && s.secret) return s.secret;
+  } catch {}
+  const secret = crypto.randomBytes(32).toString("hex");
+  fs.writeFileSync(SECRET_FILE, JSON.stringify({ secret, createdAt: new Date().toISOString() }, null, 2));
+  return secret;
+}
+const SECRET = loadSecret();
 
 function readJSON(file, fallback) {
   try {
@@ -23,8 +37,28 @@ function readJSON(file, fallback) {
     return fallback;
   }
 }
+function rotateBackups(base) {
+  try {
+    const olds = fs.readdirSync(BACKUP_DIR).filter((f) => f.startsWith(base + "-")).sort();
+    while (olds.length > 20) fs.unlinkSync(path.join(BACKUP_DIR, olds.shift()));
+  } catch {}
+}
 function writeJSON(file, data) {
-  fs.writeFileSync(file, JSON.stringify(data, null, 2));
+  const json = JSON.stringify(data, null, 2);
+  try {
+    if (fs.existsSync(file)) {
+      const base = path.basename(file, ".json");
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      fs.copyFileSync(file, path.join(BACKUP_DIR, base + "-" + stamp + ".json"));
+      rotateBackups(base);
+    }
+  } catch (e) { console.error("[AAMART] Backup failed:", e.message); }
+  const tmp = file + ".tmp";
+  const fd = fs.openSync(tmp, "w");
+  fs.writeSync(fd, json);
+  fs.fsyncSync(fd);
+  fs.closeSync(fd);
+  fs.renameSync(tmp, file);
 }
 function id() {
   return Date.now().toString(36) + crypto.randomBytes(3).toString("hex");
@@ -56,7 +90,9 @@ function verifyToken(token) {
   if (!token || token.indexOf(".") < 0) return null;
   const [body, sig] = token.split(".");
   const expect = crypto.createHmac("sha256", SECRET).update(body).digest("base64url");
-  if (sig !== expect) return null;
+  const a = Buffer.from(String(sig));
+  const b = Buffer.from(String(expect));
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
   try {
     const data = JSON.parse(Buffer.from(body, "base64url").toString());
     if (!data.exp || data.exp < Date.now()) return null;
@@ -66,10 +102,16 @@ function verifyToken(token) {
   }
 }
 
-const DEFAULT_ADMIN = { username: "admin", password: "AAMART@123" };
+function randomPassword(len) {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789@#%";
+  let out = "";
+  for (let i = 0; i < (len || 12); i++) out += chars[crypto.randomInt(chars.length)];
+  return out;
+}
 
-// In-memory OTP store: email -> { otp, expires }
+// In-memory OTP store: email -> { otp, expires, attempts }
 const otps = new Map();
+const lastOtpSent = new Map();
 function sanitizeUser(u) {
   return {
     id: u.id, name: u.name || "", firstName: u.firstName || "", lastName: u.lastName || "",
@@ -163,18 +205,59 @@ const DEFAULT_PRODUCTS = [
   },
 ];
 
-function seed() {
-  if (!fs.existsSync(ADMIN_FILE)) {
-    writeJSON(ADMIN_FILE, {
-      username: DEFAULT_ADMIN.username,
-      passwordHash: hashPassword(DEFAULT_ADMIN.password),
-      createdAt: new Date().toISOString(),
-    });
+function repairData() {
+  const checks = [
+    { file: PRODUCTS_FILE, ok: (d) => Array.isArray(d) && d.length > 0 },
+    { file: ORDERS_FILE, ok: (d) => Array.isArray(d) },
+    { file: USERS_FILE, ok: (d) => Array.isArray(d) },
+    { file: ADMIN_FILE, ok: (d) => d && d.username && d.passwordHash },
+  ];
+  for (const c of checks) {
+    let invalid = false;
+    if (!fs.existsSync(c.file)) invalid = true;
+    else {
+      try { if (!c.ok(JSON.parse(fs.readFileSync(c.file, "utf8")))) invalid = true; }
+      catch { invalid = true; }
+    }
+    if (!invalid) continue;
+    const base = path.basename(c.file, ".json");
+    const backups = fs.readdirSync(BACKUP_DIR).filter((f) => f.startsWith(base + "-")).sort().reverse();
+    let restored = false;
+    for (const b of backups) {
+      try {
+        const d = JSON.parse(fs.readFileSync(path.join(BACKUP_DIR, b), "utf8"));
+        if (c.ok(d)) {
+          fs.writeFileSync(c.file, JSON.stringify(d, null, 2));
+          console.log("[AAMART] Recovered " + base + " from backup: " + b);
+          restored = true;
+          break;
+        }
+      } catch {}
+    }
+    if (!restored) {
+      if (c.file === ORDERS_FILE || c.file === USERS_FILE) {
+        fs.writeFileSync(c.file, "[]");
+        console.log("[AAMART] Recreated " + base + " as empty list");
+      } else {
+        try { fs.unlinkSync(c.file); } catch {}
+      }
+    }
   }
-  if (process.env.ADMIN_USERNAME && process.env.ADMIN_PASSWORD) {
+}
+
+function seed() {
+  const envUser = process.env.ADMIN_USERNAME ? String(process.env.ADMIN_USERNAME).trim() : "";
+  const envPass = process.env.ADMIN_PASSWORD ? String(process.env.ADMIN_PASSWORD) : "";
+  if (!fs.existsSync(ADMIN_FILE)) {
+    const user = envUser || "admin";
+    const pass = envPass || randomPassword(12);
+    writeJSON(ADMIN_FILE, { username: user, passwordHash: hashPassword(pass), createdAt: new Date().toISOString() });
+    if (!envPass) {
+      console.log("[AAMART] Admin account created -> username: " + user + "   password: " + pass);
+      console.log("[AAMART] (Set ADMIN_USERNAME / ADMIN_PASSWORD env vars to choose your own)");
+    }
+  } else if (envUser && envPass) {
     const admin = readJSON(ADMIN_FILE, {});
-    const envUser = String(process.env.ADMIN_USERNAME).trim();
-    const envPass = String(process.env.ADMIN_PASSWORD);
     if (admin.username !== envUser || !verifyPassword(envPass, admin.passwordHash || "")) {
       writeJSON(ADMIN_FILE, {
         username: envUser,
@@ -196,6 +279,7 @@ function seed() {
   }
   if (!fs.existsSync(ORDERS_FILE)) writeJSON(ORDERS_FILE, []);
 }
+repairData();
 seed();
 
 function getProducts() {
@@ -208,9 +292,9 @@ function getOrders() {
 function send(res, status, body, headers) {
   const h = headers || {};
   h["Content-Type"] = h["Content-Type"] || "application/json; charset=utf-8";
-  h["Access-Control-Allow-Origin"] = "*";
-  h["Access-Control-Allow-Headers"] = "Content-Type, Authorization";
-  h["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS";
+  h["X-Content-Type-Options"] = "nosniff";
+  h["X-Frame-Options"] = "DENY";
+  h["Referrer-Policy"] = "no-referrer";
   res.writeHead(status, h);
   res.end(typeof body === "string" ? body : JSON.stringify(body));
 }
@@ -260,6 +344,20 @@ function requireAdmin(req, res) {
   return user;
 }
 
+// Simple in-memory rate limiter (per IP)
+const rateBuckets = new Map();
+function rateLimit(key, max, windowMs) {
+  const now = Date.now();
+  let b = rateBuckets.get(key);
+  if (!b || now - b.start > windowMs) { b = { start: now, count: 0 }; rateBuckets.set(key, b); }
+  b.count++;
+  return b.count <= max;
+}
+function clientIp(req) {
+  const fwd = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim();
+  return fwd || (req.socket && req.socket.remoteAddress) || "unknown";
+}
+
 const MIME = {
   ".html": "text/html; charset=utf-8",
   ".css": "text/css; charset=utf-8",
@@ -278,8 +376,9 @@ const MIME = {
 function serveStatic(req, res, pathname) {
   let rel = decodeURIComponent(pathname);
   if (rel === "/" || rel === "") rel = "/index.html";
-  const filePath = path.join(PUBLIC_DIR, rel);
-  if (!filePath.startsWith(PUBLIC_DIR)) return error(res, 403, "Forbidden");
+  const resolved = path.resolve(PUBLIC_DIR, "." + rel);
+  if (resolved !== PUBLIC_DIR && !resolved.startsWith(PUBLIC_DIR + path.sep)) return error(res, 403, "Forbidden");
+  const filePath = resolved;
   fs.stat(filePath, (err, stat) => {
     if (err || !stat.isFile()) {
       return error(res, 404, "Not found");
@@ -288,6 +387,9 @@ function serveStatic(req, res, pathname) {
     const noCache = [".html", ".css", ".js"].includes(ext);
     res.writeHead(200, {
       "Content-Type": MIME[ext] || "application/octet-stream",
+      "X-Content-Type-Options": "nosniff",
+      "X-Frame-Options": "DENY",
+      "Referrer-Policy": "no-referrer",
       ...(noCache ? { "Cache-Control": "no-store, no-cache, must-revalidate", Pragma: "no-cache", Expires: "0" } : {}),
     });
     fs.createReadStream(filePath).pipe(res);
@@ -317,6 +419,26 @@ async function handleApi(req, res, pathname, parsed) {
 
   if (seg[1] === "health" && method === "GET") {
     return json(res, { status: "ok", name: "AAMART", time: new Date().toISOString() });
+  }
+
+  const ip = clientIp(req);
+  if (!rateLimit("api:" + ip, 300, 60 * 1000)) {
+    return error(res, 429, "Too many requests. Please try again in a minute.");
+  }
+  if ((seg[1] === "admin" && seg[2] === "login") || (seg[1] === "auth" && seg[2] === "login")) {
+    if (!rateLimit("login:" + ip, 10, 60 * 1000)) {
+      return error(res, 429, "Too many login attempts. Please wait a minute and try again.");
+    }
+  }
+  if (seg[1] === "auth" && seg[2] === "send-otp") {
+    if (!rateLimit("otp:" + ip, 6, 10 * 60 * 1000)) {
+      return error(res, 429, "Too many OTP requests. Please try again later.");
+    }
+  }
+  if (seg[1] === "auth" && seg[2] === "verify-otp") {
+    if (!rateLimit("otpverify:" + ip, 20, 10 * 60 * 1000)) {
+      return error(res, 429, "Too many attempts. Please try again later.");
+    }
   }
 
   // ----- AUTH -----
@@ -464,8 +586,12 @@ async function handleApi(req, res, pathname, parsed) {
     if (!validEmail(email)) return error(res, 400, "Please enter a valid email address (example: name@gmail.com)");
     const u = getUsers().find((x) => x.email === email);
     if (u && u.passwordHash) return error(res, 400, "This email is already registered. Please login with your password.");
-    const otp = String(Math.floor(100000 + Math.random() * 900000));
-    otps.set(email, { otp, expires: Date.now() + 5 * 60 * 1000 });
+    if (Date.now() - (lastOtpSent.get(email) || 0) < 30 * 1000) {
+      return error(res, 429, "Please wait 30 seconds before requesting a new OTP.");
+    }
+    lastOtpSent.set(email, Date.now());
+    const otp = String(crypto.randomInt(100000, 1000000));
+    otps.set(email, { otp, expires: Date.now() + 5 * 60 * 1000, attempts: 0 });
     console.log("[AAMART] OTP for " + email + " is " + otp);
     return json(res, { sent: true, demo: otp, expiresIn: 300 });
   }
@@ -476,7 +602,12 @@ async function handleApi(req, res, pathname, parsed) {
     const rec = otps.get(email);
     if (!rec) return error(res, 400, "OTP was not requested or has expired.");
     if (rec.expires < Date.now()) { otps.delete(email); return error(res, 400, "OTP has expired. Please resend."); }
-    if (String((body && body.otp) || "") !== rec.otp) return error(res, 400, "Incorrect OTP. Please try again.");
+    rec.attempts = (rec.attempts || 0) + 1;
+    if (rec.attempts > 5) { otps.delete(email); return error(res, 429, "Too many incorrect attempts. Please request a new OTP."); }
+    const given = Buffer.from(String((body && body.otp) || ""));
+    const want = Buffer.from(rec.otp);
+    const ok = given.length === want.length && crypto.timingSafeEqual(given, want);
+    if (!ok) { otps.set(email, rec); return error(res, 400, "Incorrect OTP. Please try again."); }
     otps.delete(email);
     const signupToken = signToken({ email, stage: "signup" });
     return json(res, { signupToken });
@@ -601,6 +732,43 @@ async function handleApi(req, res, pathname, parsed) {
     return json(res, orders[idx]);
   }
 
+  // ----- BACKUP / RESTORE -----
+  if (seg[1] === "backup" && seg.length === 2 && method === "GET") {
+    const user = requireAdmin(req, res);
+    if (!user) return;
+    return json(res, {
+      app: "AAMART",
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      products: readJSON(PRODUCTS_FILE, []),
+      orders: readJSON(ORDERS_FILE, []),
+      users: readJSON(USERS_FILE, []),
+    });
+  }
+
+  if (seg[1] === "restore" && seg.length === 2 && method === "POST") {
+    const user = requireAdmin(req, res);
+    if (!user) return;
+    const body = await readBody(req);
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return error(res, 400, "Invalid backup file");
+    }
+    const keys = ["products", "orders", "users"].filter((k) => Array.isArray(body[k]));
+    if (!keys.length) return error(res, 400, "Backup file does not contain products/orders/users");
+    if (Array.isArray(body.products) && body.products.length === 0) {
+      return error(res, 400, "Backup has no products; refusing to wipe the store");
+    }
+    if (Array.isArray(body.products)) writeJSON(PRODUCTS_FILE, body.products);
+    if (Array.isArray(body.orders)) writeJSON(ORDERS_FILE, body.orders);
+    if (Array.isArray(body.users)) writeJSON(USERS_FILE, body.users);
+    return json(res, {
+      restored: keys,
+      products: getProducts().length,
+      orders: getOrders().length,
+      users: getUsers().length,
+    });
+  }
+
   // ----- STATS -----
   if (seg[1] === "stats" && method === "GET") {
     const user = requireAdmin(req, res);
@@ -627,6 +795,7 @@ server.listen(PORT, () => {
   console.log("  Admin    :  http://localhost:" + PORT + "/admin.html");
   console.log("  Health   :  http://localhost:" + PORT + "/api/health");
   console.log("  ------------------------------------------");
-  console.log("  Admin login  ->  username: admin   password: AAMART@123");
+  console.log("  Admin login  ->  set ADMIN_USERNAME / ADMIN_PASSWORD env vars");
+  console.log("  (agar env vars nahi hain to password startup log me print hota hai)");
   console.log("");
 });

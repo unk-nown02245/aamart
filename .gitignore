@@ -5,3 +5,7 @@ node_modules/
 # Local runtime data (privacy) - regenerated automatically on the server
 data/users.json
 data/orders.json
+data/admin.json
+data/secret.json
+data/backups/
+data/*.tmp

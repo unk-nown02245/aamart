@@ -108,6 +108,38 @@ function switchTab(name) {
 }
 
 /* ---------- Dashboard ---------- */
+async function downloadBackup() {
+  try {
+    const res = await fetch(API + "/backup", { headers: { Authorization: "Bearer " + token } });
+    if (!res.ok) throw new Error("Backup failed");
+    const blob = await res.blob();
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "aamart-backup-" + new Date().toISOString().slice(0, 10) + ".json";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(a.href);
+    toast("Backup downloaded - ise safe rakhein!");
+  } catch (e) { toast(e.message, true); }
+}
+
+async function restoreBackup(input) {
+  const file = input.files && input.files[0];
+  input.value = "";
+  if (!file) return;
+  if (!confirm("Restore backup from this file? Current data will be replaced (auto-backup of current data is kept).")) return;
+  try {
+    const text = await file.text();
+    const data = JSON.parse(text);
+    const res = await api("/restore", { method: "POST", body: JSON.stringify(data) });
+    toast("Restored: " + res.products + " products, " + res.orders + " orders, " + res.users + " users");
+    loadDashboard();
+    loadProducts();
+    loadOrders();
+  } catch (e) { toast(e.message || "Invalid backup file", true); }
+}
+
 async function loadDashboard() {
   try {
     const s = await api("/stats");

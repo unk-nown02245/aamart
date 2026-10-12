@@ -49,7 +49,14 @@
     <main class="admin-main">
       <!-- Dashboard -->
       <section id="tab-dashboard" class="tab">
-        <h1>Dashboard</h1>
+        <div class="head-row">
+          <h1>Dashboard</h1>
+          <div style="display:flex;gap:10px">
+            <button class="primary-btn" onclick="downloadBackup()">&#128190; Download Backup</button>
+            <button class="ghost-btn" onclick="document.getElementById('restoreFile').click()">Restore Backup</button>
+            <input type="file" id="restoreFile" accept=".json,application/json" style="display:none" onchange="restoreBackup(this)" />
+          </div>
+        </div>
         <div class="stat-grid">
           <div class="stat-card"><p>Total Products</p><h2 id="statProducts">0</h2></div>
           <div class="stat-card"><p>Total Orders</p><h2 id="statOrders">0</h2></div>
