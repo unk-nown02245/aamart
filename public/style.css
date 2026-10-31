@@ -1,4 +1,4 @@
-:root {
+﻿:root {
   --blue: #2874f0;
   --blue-dark: #1b5cc4;
   --navy: #172337;
@@ -78,12 +78,9 @@ button { font-family: inherit; cursor: pointer; }
 
 /* Header (Flipkart style) */
 .header { position: sticky; top: 0; z-index: 40; background: var(--blue); }
-.header-main {
-  display: flex; flex-direction: column; gap: 10px;
-  max-width: 1240px; margin: 0 auto; padding: 10px 16px;
-}
-.header-top { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
-.header-bottom { display: flex; align-items: center; gap: 16px; }
+.header-main { display:flex; flex-direction:column; gap:10px; max-width:1240px; margin:0 auto; padding:10px 16px; }
+.header-top { display:flex; align-items:center; justify-content:space-between; gap:20px; flex-wrap:wrap; }
+.header-bottom { display:flex; align-items:center; gap:16px; flex-wrap:nowrap; }
 .logo { display: flex; flex-direction: column; line-height: 1.05; flex-shrink: 0; }
 .logo-mark {
   color: #fff; font-size: 24px; font-weight: 800; font-style: italic; letter-spacing: 1px;
@@ -97,10 +94,8 @@ button { font-family: inherit; cursor: pointer; }
 .loc-icon { font-size: 16px; }
 .loc-label { display: block; color: #dfe7f7; font-size: 11px; }
 .loc-value { display: block; font-weight: 600; }
-.search {
-  flex: 1; min-width: 120px; background: #fff; border-radius: 3px;
-  display: flex; align-items: center; padding: 0 6px 0 12px; box-shadow: 0 1px 2px rgba(0,0,0,.15);
-}
+.search { flex: 1; min-width: 0; background:#fff; border-radius:3px; display:flex; align-items:center; padding:0 6px 0 12px; box-shadow:0 1px 2px rgba(0,0,0,.15); }
+.search input { flex:1; min-width:0; }
 .search input { flex: 1; border: none; outline: none; font-size: 15px; padding: 10px 4px; color: var(--text); }
 .search button { border: none; background: transparent; font-size: 18px; color: var(--blue); padding: 8px 10px; }
 .header-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
@@ -371,3 +366,55 @@ button { font-family: inherit; cursor: pointer; }
 /* COD note in checkout */
 .cod-note { background: #f0f7f0; border: 1px solid #cde8cd; color: #1e5c1e; border-radius: 6px; padding: 10px 12px; font-size: 13px; margin: 6px 0 14px; line-height: 1.5; }
 .cod-note span { color: #4a7a4a; font-size: 12px; }
+
+@media (max-width: 768px) {
+  .header-main { display:flex; flex-direction:column; gap:10px; max-width:1240px; margin:0 auto; padding:10px 16px; }
+  .header-top { display:flex; align-items:center; justify-content:space-between; gap:20px; flex-wrap:wrap; }
+  .logo-mark { font-size: 20px; }
+  .location { display: none; }
+  .header-bottom { flex-wrap: nowrap; gap: 10px; }
+  .search { flex: 1; min-width: 0; background:#fff; border-radius:3px; display:flex; align-items:center; padding:0 6px 0 12px; box-shadow:0 1px 2px rgba(0,0,0,.15); }
+.search input { flex:1; min-width:0; }
+  .search input { font-size: 13px; padding: 9px 4px; }
+  .header-right { gap: 6px; }
+  .login-btn, .user-btn { padding: 6px 12px; font-size: 13px; }
+  .user-btn .uname { max-width: 70px; }
+  .cart-link { font-size: 13px; gap: 4px; }
+  .catbar-inner { padding: 0 12px; gap: 16px; }
+  .cat-item { padding: 10px 0; font-size: 13px; }
+  .banner { margin: 10px 10px 0; padding: 22px 16px; border-radius: 4px; }
+  .banner-inner h1 { font-size: 22px; }
+  .banner-tag { font-size: 11px; letter-spacing: 2px; }
+  .banner-btn { padding: 10px 24px; font-size: 14px; }
+  .subbar { margin: 10px 10px 0; padding: 0; }
+  .toolbar { margin: 16px 10px 0; padding: 0; }
+  .grid { margin: 12px 10px 30px; padding: 0; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+  .card-img { height: 150px; }
+  .card-name { font-size: 13px; min-height: 36px; }
+  .card-body { padding: 8px 10px 12px; }
+  .price { font-size: 16px; }
+  .footer-cols { grid-template-columns: 1fr 1fr; padding: 24px 16px; }
+}
+@media (max-width: 420px) {
+  .grid { grid-template-columns: repeat(2, 1fr); }
+  .card-img { height: 130px; }
+  .splash-logo { font-size: 56px; letter-spacing: 4px; }
+}
+
+
+
+
+
+.bottom-nav { display:none; }
+@media (max-width:768px) {
+  body { padding-bottom:70px; }
+  .bottom-nav {
+    display:flex; position:fixed; left:0; right:0; bottom:0; z-index:60;
+    background:#fff; border-top:1px solid var(--line);
+    justify-content:space-around; align-items:center; padding:6px 0 8px;
+    box-shadow:0 -2px 8px rgba(0,0,0,.04);
+  }
+  .bottom-nav a { display:flex; flex-direction:column; align-items:center; gap:4px; font-size:11px; color:var(--text); }
+  .bottom-nav .bn-icon { font-size:18px; line-height:1; }
+  .bottom-nav .bn-active { color:var(--blue); }
+}
