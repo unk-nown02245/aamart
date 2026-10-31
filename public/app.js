@@ -435,7 +435,7 @@ async function init() {
   const params = new URLSearchParams(location.search);
   if (params.get("login") === "1" && !customer) openAuth("profile");
 }
-setTimeout(hideSplash,0); setTimeout(hideSplash,100); setTimeout(hideSplash,500); init();\n  
+document.addEventListener('DOMContentLoaded',function(){hideSplash();setTimeout(hideSplash,50);setTimeout(hideSplash,200);}); setTimeout(hideSplash,0); setTimeout(hideSplash,100); setTimeout(hideSplash,500); init();\n  
 
 function showCartPage() {
   document.querySelectorAll('main > section:not(#cartPage)').forEach(s=>s.style.display='none');
