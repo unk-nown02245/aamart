@@ -87,6 +87,24 @@
     <section id="productGrid" class="grid"></section>
     <p id="emptyMsg" class="empty" style="display:none">No products found.</p>
   </main>
+  <section id="cartPage" class="cart-page">
+    <div class="cp-wrap">
+      <div class="cp-main">
+        <div class="cp-head"><h2>My Cart</h2></div>
+        <div id="cartPageItems" class="cp-items"></div>
+      </div>
+      <aside class="cp-side">
+        <div class="cp-side-card">
+          <h3>PRICE DETAILS</h3>
+          <div class="cp-row"><span>Price</span><span id="cpPrice">&#8377;0</span></div>
+          <div class="cp-row"><span>Delivery Charges</span><span class="free">FREE</span></div>
+          <div class="cp-total"><span>Amount Payable</span><strong id="cpTotal">&#8377;0</strong></div>
+          <button class="cp-check" id="cpCheckout" onclick="checkoutFromPage()">PLACE ORDER</button>
+        </div>
+      </aside>
+    </div>
+  </section>
+
 
   <footer class="footer">
     <div class="footer-cols">

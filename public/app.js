@@ -180,7 +180,7 @@ function renderCart() {
   $("cartTotal").textContent = money(cartTotal());
   $("checkoutBtn").disabled = cart.length === 0;
 }
-function openCart() { renderCart(); $("cartDrawer").classList.add("show"); $("overlay").classList.add("show"); return false; }
+function openCart() { if(window.innerWidth <= 900){ showCartPage(); updateCartCount(); return false; } renderCart(); cartDrawer.classList.add('show'); overlay.classList.add('show'); return false; }
 function closeAll() { $("cartDrawer").classList.remove("show"); $("overlay").classList.remove("show"); }
 
 function checkout() {
@@ -439,3 +439,67 @@ async function init() {
   if (params.get("login") === "1" && !customer) openAuth("profile");
 }
 init();
+
+
+function showCartPage() {
+  document.querySelectorAll('main > section:not(#cartPage)').forEach(s=>s.style.display='none');
+  document.querySelector('.catbar').style.display='none';
+  const cp = document.getElementById('cartPage');
+  if(cp) cp.classList.add('active');
+  renderCartPage();
+  window.scrollTo({top:0, behavior:'instant'});
+  return false;
+}
+function hideCartPage() {
+  document.querySelectorAll('main > section:not(#cartPage)').forEach(s=>s.style.display='');
+  document.querySelector('.catbar').style.display='';
+  const cp = document.getElementById('cartPage');
+  if(cp) cp.classList.remove('active');
+  return false;
+}
+function renderCartPage() {
+  const list = document.getElementById('cartPageItems');
+  const p = document.getElementById('cpPrice');
+  const t = document.getElementById('cpTotal');
+  const btn = document.getElementById('cpCheckout');
+  if(!list) return;
+  if(!cart.length) {
+    list.innerHTML = <div style="background:#fff;padding:40px;text-align:center;border-radius:2px;">Your cart is empty</div>;
+    if(p) p.textContent = money(0);
+    if(t) t.textContent = money(0);
+    if(btn) btn.disabled = true;
+    return;
+  }
+  const total = cartTotal();
+  if(p) p.textContent = money(total);
+  if(t) t.textContent = money(total);
+  if(btn) btn.disabled = false;
+  list.innerHTML = cart.map(c=>{
+    const prod = products.find(x=>x.id===c.id)||c;
+    const mrp = prod.mrp || Math.round(c.price * 1.4);
+    const disc = Math.max(0, Math.round((1-c.price/mrp)*100));
+    return <div class="cp-row-item">
+      <img class="cp-img" src="" onerror="this.src='/img/placeholder.svg'">
+      <div class="cp-info">
+        <div class="cp-name"></div>
+        <div class="cp-meta"></div>
+        <div class="cp-price-row">
+          <span class="cp-price"></span>
+          <span class="cp-mrp"></span>
+          <span class="cp-disc">% off</span>
+        </div>
+        <div class="cp-actions">
+          <div class="cp-qty">
+            <button onclick="cpQty('',-1)">-</button>
+            <span></span>
+            <button onclick="cpQty('',1)">+</button>
+          </div>
+          <button class="cp-link" onclick="removeItem('');renderCartPage();">REMOVE</button>
+          <button class="cp-link blue" onclick="buyNow('')">BUY NOW</button>
+        </div>
+      </div>
+    </div>;
+  }).join('');
+}
+function cpQty(id,delta){ changeQty(id,delta); renderCartPage(); updateCartCount(); }
+function checkoutFromPage(){ hideCartPage(); checkout(); }
