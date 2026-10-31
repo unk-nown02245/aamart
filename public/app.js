@@ -421,15 +421,7 @@ function bindEvents() {
 
 function hideSplash(){}
 
-async function init() {
-  setTimeout(hideSplash,50);
-  bindEvents();
-  updateCartCount();
-  await loadSession();
-  try {
-    await loadCategories();
-    await loadProducts();
-  } catch (e) {
+async function init() {\n  bindEvents();\n  updateCartCount();\n  await loadSession();\n  try {\n    await loadCategories();\n    await loadProducts();\n  } catch (e) {\n    toast('Could not load products: ' + e.message);\n  }\n  const params = new URLSearchParams(location.search);\n  if (params.get('login') === '1' && !customer) openAuth('profile');\n  } catch (e) {
     toast("Could not load products: " + e.message);
   }
   const params = new URLSearchParams(location.search);
