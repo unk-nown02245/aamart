@@ -419,7 +419,7 @@ function bindEvents() {
   });
 }
 
-function hideSplash(){}
+
 
 async function init() {\n  bindEvents();\n  updateCartCount();\n  await loadSession();\n  try {\n    await loadCategories();\n    await loadProducts();\n  } catch (e) {\n    toast('Could not load products: ' + e.message);\n  }\n  const params = new URLSearchParams(location.search);\n  if (params.get('login') === '1' && !customer) openAuth('profile');\n  } catch (e) {
     toast("Could not load products: " + e.message);
@@ -427,7 +427,7 @@ async function init() {\n  bindEvents();\n  updateCartCount();\n  await loadSess
   const params = new URLSearchParams(location.search);
   if (params.get("login") === "1" && !customer) openAuth("profile");
 }
-document.addEventListener('DOMContentLoaded',function(){hideSplash();setTimeout(hideSplash,50);setTimeout(hideSplash,200);}); setTimeout(hideSplash,0); setTimeout(hideSplash,100); setTimeout(hideSplash,500); hideSplash(); setTimeout(hideSplash,10); setTimeout(hideSplash,50); setTimeout(hideSplash,200); init();\n  
+{hideSplash();});    hideSplash();    init();\n  
 
 function showCartPage() {
   document.querySelectorAll('main > section:not(#cartPage)').forEach(s=>s.style.display='none');
