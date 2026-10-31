@@ -419,7 +419,7 @@ function bindEvents() {
   });
 }
 
-function hideSplash(){ var s=document.getElementById('splash'); if(!s) return; s.style.display='none'; s.classList.add('hide'); s.remove(); }
+function hideSplash(){}
 
 async function init() {
   setTimeout(hideSplash,50);
