@@ -425,7 +425,7 @@ function hideSplash() {
 }
 
 async function init() {
-  setTimeout(hideSplash, 2200);
+  setTimeout(hideSplash, 1400);
   bindEvents();
   updateCartCount();
   await loadSession();
@@ -438,7 +438,7 @@ async function init() {
   const params = new URLSearchParams(location.search);
   if (params.get("login") === "1" && !customer) openAuth("profile");
 }
-init();
+init();\n  window.addEventListener('load', ()=>setTimeout(hideSplash,800), {once:true});
 
 
 function showCartPage() {
