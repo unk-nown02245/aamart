@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 480">
+<defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1a56db"/><stop offset="1" stop-color="#0e3fa8"/></linearGradient></defs>
+<rect width="1200" height="480" fill="url(#bg)"/>
+<circle cx="1000" cy="110" r="190" fill="#ffffff" opacity="0.13"/>
+<circle cx="1090" cy="360" r="130" fill="#ffffff" opacity="0.10"/>
+<text x="80" y="215" font-family="Arial, sans-serif" font-size="72" font-weight="bold" fill="#ffffff">Big Festive Sale</text>
+<text x="82" y="285" font-family="Arial, sans-serif" font-size="34" fill="#eaf2ff">Up to 70% off on top categories</text>
+<rect x="82" y="330" width="240" height="66" rx="33" fill="#ffffff"/>
+<text x="202" y="373" font-family="Arial, sans-serif" font-size="28" font-weight="bold" text-anchor="middle" fill="#1a56db">Shop Now</text>
+</svg>

@@ -1,162 +1,55 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>AAMART - Online Shopping for Electronics, Fashion & More</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='18' fill='%232874f0'/%3E%3Ctext x='50' y='70' font-size='58' font-family='Arial' font-weight='bold' fill='white' text-anchor='middle'%3EA%3C/text%3E%3C/svg%3E" />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Poppins:ital,wght@0,300;0,400;0,500;0,600;0,800;1,700;1,800;1,900&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/style.css" />
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#1a56db">
+  <meta name="description" content="Aamart - Shop smart, live better. Electronics, fashion, home essentials and more at the best prices.">
+  <title>Aamart - Online Shopping</title>
+  <link rel="icon" href="/img/placeholder.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <div class="splash-tag">Online Shopping</div>
-      <div class="splash-bar"><span></span></div>
-    </div>
-  </div>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="brand" href="#/" aria-label="Aamart home">
+        <span class="brand-mark">A</span>
+        <span class="brand-text">aamart<small>shop smart</small></span>
+      </a>
 
-  <header class="header">
-    <div class="header-main">
-      <div class="header-top">
-        <a class="logo" href="/" onclick="return goHome()">
-          <span class="logo-mark">AAMART</span>
+      <form class="search" id="search-form" role="search" autocomplete="off">
+        <span class="search-icon" aria-hidden="true">&#128269;</span>
+        <input id="search-input" type="search" name="q" placeholder="Search for products, brands and more" aria-label="Search products">
+        <button type="submit" class="search-btn">Search</button>
+        <div id="suggestions" class="suggestions hidden" role="listbox"></div>
+      </form>
+
+      <div class="top-actions">
+        <button class="icon-btn lang-btn" id="lang-toggle" title="Change language" aria-label="Change language">EN</button>
+        <a class="icon-btn with-label" href="#/account" id="account-link">
+          <span aria-hidden="true">&#128100;</span><span class="label">Account</span>
         </a>
-
-        <div class="location">
-          <span class="loc-icon">&#128205;</span>
-          <div>
-            <span class="loc-label">Deliver to</span>
-            <span class="loc-value">Select delivery location</span>
-          </div>
-        </div>
-      </div>
-
-      <div class="header-bottom">
-        <div class="search">
-          <input id="searchInput" type="text" placeholder="Search for products, brands and more" />
-          <button id="searchBtn" aria-label="Search">&#128269;</button>
-        </div>
-
-        <div class="header-right">
-          <div class="user-wrap">
-            <button class="user-btn" id="loginBtn" onclick="return onUserBtn()">Login <span>&#9662;</span></button>
-            <div class="more-dropdown">
-              <a href="#" onclick="return openProfile()">My Profile</a>
-              <a href="#" onclick="return notYet()">Orders</a>
-              <a href="#" onclick="return notYet()">Wishlist</a>
-              <a href="#" onclick="return notYet()">Rewards</a>
-              <a href="#" onclick="return notYet()">Gift Cards</a>
-              <a href="#" onclick="return notYet()">24x7 Customer Care</a>
-              <a href="#" id="logoutMenu" style="display:none" onclick="return doLogout()">Logout</a>
-              <a href="/admin.html">Admin Panel</a>
-            </div>
-          </div>
-          <a class="cart-link" href="#" onclick="return openCart()">&#128722; Cart <span class="cart-count" id="cartCount">0</span></a>
-        </div>
+        <a class="icon-btn with-label cart-link" href="#/cart" aria-label="Cart">
+          <span aria-hidden="true">&#128722;</span><span class="label">Cart</span>
+          <span class="badge" id="cart-badge" hidden>0</span>
+        </a>
       </div>
     </div>
-
-    <nav class="catbar">
-      <div class="catbar-inner" id="catBar"></div>
-    </nav>
   </header>
 
-  <main>
-    <section class="banner">
-      <div class="banner-inner">
-        <p class="banner-tag">AAMART Big Days</p>
-        <h1>Prices Won't Be This Low Again!</h1>
-        <p>Massive discounts across Electronics, Fashion, Home &amp; much more.</p>
-        <button class="banner-btn" onclick="scrollToProducts()">Shop Now</button>
-      </div>
-      <div class="banner-art">
-        <span>&#128717;</span><span>&#128241;</span><span>&#128717;</span>
-      </div>
-    </section>
+  <main id="app" class="app" aria-live="polite"></main>
 
-    <section class="toolbar">
-      <h2 id="sectionTitle">Popular Products</h2>
-    </section>
+  <nav class="bottom-nav" aria-label="Main navigation">
+    <a href="#/" data-nav="home" class="nav-item"><span class="nav-icon">&#127968;</span><span data-i18n="home">Home</span></a>
+    <a href="#/categories" data-nav="categories" class="nav-item"><span class="nav-icon">&#128218;</span><span data-i18n="categories">Categories</span></a>
+    <a href="#/cart" data-nav="cart" class="nav-item"><span class="nav-icon">&#128722;</span><span data-i18n="cart">Cart</span></a>
+    <a href="#/orders" data-nav="orders" class="nav-item"><span class="nav-icon">&#128230;</span><span data-i18n="orders">Orders</span></a>
+    <a href="#/account" data-nav="account" class="nav-item"><span class="nav-icon">&#128100;</span><span data-i18n="account">Account</span></a>
+  </nav>
 
-    <div class="subbar" id="subBar"></div>
-
-    <section id="productGrid" class="grid"></section>
-    <p id="emptyMsg" class="empty" style="display:none">No products found.</p>
-  </main>
-  <section id="cartPage" class="cart-page">
-    <div class="cp-wrap">
-      <div class="cp-main">
-        <div class="cp-head"><h2>My Cart</h2></div>
-        <div id="cartPageItems" class="cp-items"></div>
-      </div>
-      <aside class="cp-side">
-        <div class="cp-side-card">
-          <h3>PRICE DETAILS</h3>
-          <div class="cp-row"><span>Price</span><span id="cpPrice">&#8377;0</span></div>
-          <div class="cp-row"><span>Delivery Charges</span><span class="free">FREE</span></div>
-          <div class="cp-total"><span>Amount Payable</span><strong id="cpTotal">&#8377;0</strong></div>
-          <button class="cp-check" id="cpCheckout" onclick="checkoutFromPage()">PLACE ORDER</button>
-        </div>
-      </aside>
-    </div>
-  </section>
-
-
-  <footer class="footer">
-    <div class="footer-cols">
-      <div>
-        <h4>ABOUT</h4>
-        <p>Contact Us</p><p>About Us</p><p>Careers</p>
-      </div>
-      <div>
-        <h4>HELP</h4>
-        <p>Payments</p><p>Shipping</p><p>Cancellation</p>
-      </div>
-      <div>
-        <h4>POLICY</h4>
-        <p>Return Policy</p><p>Terms of Use</p><p>Privacy</p>
-      </div>
-      <div>
-        <h4>AAMART</h4>
-        <p>Your one-stop online store.</p>
-        <p>&copy; <span id="year"></span> AAMART</p>
-      </div>
-    </div>
-  </footer>
-
-  <div class="drawer-overlay" id="overlay" onclick="closeAll()"></div>
-
-  <aside class="drawer" id="cartDrawer">
-    <div class="drawer-head">
-      <h3>My Cart</h3>
-      <button class="icon-btn" onclick="closeAll()">&times;</button>
-    </div>
-    <div id="cartItems" class="cart-items"></div>
-    <div class="cart-foot">
-      <div class="cart-total"><span>Total</span><strong id="cartTotal">&#8377;0</strong></div>
-      <button class="primary-btn full" id="checkoutBtn" onclick="checkout()">Place Order</button>
-    </div>
-  </aside>
-
-  <div class="modal-overlay" id="modal" onclick="if(event.target===this)closeModal()">
-    <div class="modal" id="modalBox"></div>
-  </div>
-
-  <div class="modal-overlay" id="authModal" onclick="if(event.target===this)closeAuth()">
-    <div class="modal tiny" id="authBox"></div>
-  </div>
-
-  <div id="toast" class="toast"></div>
+  <div id="toast-wrap" class="toast-wrap" aria-live="assertive"></div>
+  <div id="modal-root"></div>
 
   <script src="/app.js"></script>
-
-  <nav class="bottom-nav">
-    <a href="/" onclick="return goHome()"><span class="bn-icon">🏠</span><span>Home</span></a>
-    <a href="#" onclick="return notYet()"><span class="bn-icon">📂</span><span>Categories</span></a>
-    <a href="#" onclick="return openCart()"><span class="bn-icon">🛒</span><span>Cart</span></a>
-    <a href="#" onclick="return openProfile()"><span class="bn-icon">👤</span><span>Account</span></a>
-  </nav>
 </body>
 </html>
-

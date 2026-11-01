@@ -2,15 +2,13 @@
   "name": "aamart",
   "version": "1.0.0",
   "private": true,
-  "description": "AAMART - zero-dependency Node.js e-commerce store with admin panel",
+  "description": "AAMART - production-ready single-owner e-commerce platform (Node.js + SQLite, zero npm dependencies)",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "dev": "node server.js"
   },
   "engines": {
-    "node": ">=18"
-  },
-  "dependencies": {
-    "mongoose": "^9.11.4"
+    "node": ">=22.5.0"
   }
 }

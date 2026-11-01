@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Admin Login · Aamart</title>
+  <link rel="stylesheet" href="/admin.css">
+</head>
+<body class="login-page">
+  <main class="login-wrap">
+    <section class="login-card">
+      <div class="login-logo" aria-hidden="true">A</div>
+      <h1 class="login-title">Aamart <span>Admin</span></h1>
+      <p class="login-sub">Sign in to manage your store</p>
+
+      <form id="login-form" novalidate>
+        <label class="field">
+          <span>Username</span>
+          <input name="username" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" required>
+        </label>
+        <label class="field">
+          <span>Password</span>
+          <input name="password" type="password" autocomplete="current-password" required>
+        </label>
+        <div class="login-error" id="login-error" role="alert" hidden></div>
+        <button class="btn primary block" type="submit" id="login-btn">Sign in</button>
+      </form>
+
+      <div class="login-hint">
+        <strong>Demo accounts</strong>
+        <div>Super Admin &mdash; <code>amirhamza</code> / <code>akib@123</code></div>
+        <div>Manager &mdash; <code>aditism</code> / <code>aditi@123</code></div>
+      </div>
+
+      <a class="login-back" href="/">&larr; Back to storefront</a>
+    </section>
+  </main>
+  <script src="/admin-login.js"></script>
+</body>
+</html>
