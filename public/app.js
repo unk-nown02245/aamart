@@ -96,6 +96,23 @@ function safeImage(value) {
   return "/img/placeholder.svg";
 }
 
+function categoryImage(value) {
+  const raw = String(value == null ? "" : value).trim();
+  if (!raw) return "/img/categories/default.svg";
+  return safeImage(raw);
+}
+
+function setupImageFallbacks() {
+  document.addEventListener("error", (event) => {
+    const img = event.target;
+    if (!img || img.tagName !== "IMG" || !img.dataset.fallback || img.dataset.fallbackApplied) return;
+    img.dataset.fallbackApplied = "1";
+    img.src = img.dataset.fallback;
+  }, true);
+}
+
+setupImageFallbacks();
+
 function setMeta(title, description) {
   document.title = title ? title + " - Aamart" : "Aamart - Online Shopping";
   const meta = document.querySelector('meta[name="description"]');
@@ -344,7 +361,7 @@ function productCard(p) {
   return (
     '<article class="product-card">' +
       '<a class="pc-media" href="#/product/' + p.id + '">' +
-        '<img src="' + safeImage(p.image) + '" alt="' + escapeHtml(p.title) + '" loading="lazy">' +
+        '<img src="' + safeImage(p.image) + '" alt="' + escapeHtml(p.title) + '" loading="lazy" data-fallback="/img/placeholder.svg">' +
         discount +
       "</a>" +
       '<button class="pc-wish' + wishActive + '" data-action="wishlist" data-id="' + p.id + '" aria-label="Add to wishlist">\u2665</button>' +
@@ -417,7 +434,7 @@ async function renderHome(token) {
     "</div>";
 
   html += '<div class="section"><div class="section-head"><h2>' + t("categories") + '</h2><a href="#/categories">' + t("viewAll") + ' \u203A</a></div><div class="cat-strip">' +
-    cats.map((c) => '<a class="cat-chip" href="#/products?category=' + encodeURIComponent(c.slug) + '"><span class="emoji">' + escapeHtml(c.icon || "\u{1F3F7}") + '</span><span class="cname">' + escapeHtml(c.name) + '</span><span class="ccount">' + c.count + " items</span></a>").join("") +
+    cats.map((c) => '<a class="cat-chip" href="#/products?category=' + encodeURIComponent(c.slug) + '"><span class="cat-thumb"><img src="' + categoryImage(c.image) + '" alt="' + escapeHtml(c.name) + '" loading="lazy" data-fallback="/img/categories/default.svg"></span><span class="cname">' + escapeHtml(c.name) + '</span><span class="ccount">' + c.count + " items</span></a>").join("") +
     "</div></div>";
 
   html += '<div class="section">' + sectionHead(t("deals"), "#/products?sort=discount") + productRail(dealsRes.products) + "</div>";
@@ -457,16 +474,13 @@ async function renderCategories(token) {
   if (token !== renderToken) return;
   state.categories = data.categories || [];
   setMeta("Shop by Category", "Browse all Aamart categories and find what you need.");
-  const html = '<div class="page-head"><h1>' + t("categories") + "</h1></div>" +
-    '<div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(150px,1fr))">' +
+  const html = '<div class="page-head"><div><h1>Shop by Category</h1><p class="muted small">Find everything you need, organised for easy browsing.</p></div></div>' +
+    '<div class="category-grid">' +
     state.categories.map((c) =>
-      '<div class="card">' +
-        '<div class="row" style="gap:8px"><span style="font-size:26px">' + escapeHtml(c.icon || "\u{1F3F7}") + "</span><div><strong>" + escapeHtml(c.name) + '</strong><div class="muted small">' + c.count + " items</div></div></div>" +
-        '<div class="row wrap" style="gap:6px;margin-top:10px">' +
-          '<a class="chip" href="#/products?category=' + encodeURIComponent(c.slug) + '">All</a>' +
-          (c.subs || []).slice(0, 6).map((s) => '<a class="chip" href="#/products?sub=' + encodeURIComponent(s.slug) + '">' + escapeHtml(s.name) + "</a>").join("") +
-        "</div>" +
-      "</div>"
+      '<a class="category-card" href="#/products?category=' + encodeURIComponent(c.slug) + '">' +
+        '<div class="category-card-media"><img src="' + categoryImage(c.image) + '" alt="' + escapeHtml(c.name) + '" loading="lazy" data-fallback="/img/categories/default.svg"></div>' +
+        '<div class="category-card-body"><span class="category-card-name">' + escapeHtml(c.name) + '</span><span class="category-card-count">' + c.count + " items</span></div>" +
+      "</a>"
     ).join("") + "</div>";
   $("#app").innerHTML = html;
 }

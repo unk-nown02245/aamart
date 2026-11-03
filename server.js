@@ -505,8 +505,8 @@ function categoryTree(includeEmpty) {
     const subs = rows.filter((r) => r.parent_id === p.id);
     const count = (counts[p.id] || 0) + subs.reduce((s, x) => s + (counts[x.id] || 0), 0);
     return {
-      id: p.id, name: p.name, slug: p.slug, icon: p.icon, count,
-      subs: subs.map((s) => ({ id: s.id, name: s.name, slug: s.slug, count: counts[s.id] || 0 })),
+      id: p.id, name: p.name, slug: p.slug, icon: p.icon, image: p.image || "", count,
+      subs: subs.map((s) => ({ id: s.id, name: s.name, slug: s.slug, image: s.image || "", count: counts[s.id] || 0 })),
     };
   }).filter((p) => includeEmpty || p.count > 0)
     .map((p) => ({ ...p, subs: includeEmpty ? p.subs : p.subs.filter((s) => s.count > 0) }));
@@ -1489,17 +1489,21 @@ async function handleApi(req, res, pathname, parsed) {
       const name = sanitizeString(body && body.name, 80);
       if (!name) return fail(res, 400, "Category name is required");
       const parentId = body.parentId && db.prepare("SELECT id FROM categories WHERE id = ?").get(body.parentId) ? body.parentId : null;
+      const image = safeUrl(body.image, 500);
+      if (image === null) return fail(res, 400, "Category image must be a relative path or HTTPS URL");
       const id = randomId("cat");
-      db.prepare("INSERT INTO categories(id, name, slug, icon, parent_id, sort, active) VALUES (?, ?, ?, ?, ?, ?, 1)")
-        .run(id, name, slugify(name) + "-" + randomCode(3).toLowerCase(), sanitizeString(body.icon, 10), parentId, safeNumber(body.sort, 0));
+      db.prepare("INSERT INTO categories(id, name, slug, icon, image, parent_id, sort, active) VALUES (?, ?, ?, ?, ?, ?, ?, 1)")
+        .run(id, name, slugify(name) + "-" + randomCode(3).toLowerCase(), sanitizeString(body.icon, 10), image, parentId, safeNumber(body.sort, 0));
       return json(res, db.prepare("SELECT * FROM categories WHERE id = ?").get(id), 201);
     }
     if (seg.length === 4 && method === "PUT") {
       const body = await readBody(req);
       const existing = db.prepare("SELECT * FROM categories WHERE id = ?").get(seg[3]);
       if (!existing) return fail(res, 404, "Category not found");
-      db.prepare("UPDATE categories SET name = ?, icon = ?, sort = ?, active = ? WHERE id = ?")
-        .run(body.name != null ? sanitizeString(body.name, 80) : existing.name, body.icon != null ? sanitizeString(body.icon, 10) : existing.icon, body.sort != null ? safeNumber(body.sort, existing.sort) : existing.sort, body.active != null ? (body.active ? 1 : 0) : existing.active, existing.id);
+      const image = body.image !== undefined ? safeUrl(body.image, 500) : (existing.image || "");
+      if (image === null) return fail(res, 400, "Category image must be a relative path or HTTPS URL");
+      db.prepare("UPDATE categories SET name = ?, icon = ?, image = ?, sort = ?, active = ? WHERE id = ?")
+        .run(body.name != null ? sanitizeString(body.name, 80) : existing.name, body.icon != null ? sanitizeString(body.icon, 10) : existing.icon, image, body.sort != null ? safeNumber(body.sort, existing.sort) : existing.sort, body.active != null ? (body.active ? 1 : 0) : existing.active, existing.id);
       return json(res, db.prepare("SELECT * FROM categories WHERE id = ?").get(existing.id));
     }
     if (seg.length === 4 && method === "DELETE") {

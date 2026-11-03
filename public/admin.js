@@ -838,13 +838,13 @@
     rows.forEach(function (c) { byId[c.id] = c; });
 
     var html = pageHead("Categories", rows.length + " categories", '<button class="btn primary" type="button" data-action="new-category">+ Add category</button>');
-    html += '<div class="card"><div class="table-wrap"><table class="data"><thead><tr><th>Name</th><th>Parent</th><th>Icon</th><th>Sort</th><th>Status</th><th>Actions</th></tr></thead><tbody>';
+    html += '<div class="card"><div class="table-wrap"><table class="data"><thead><tr><th>Name</th><th>Parent</th><th>Image</th><th>Sort</th><th>Status</th><th>Actions</th></tr></thead><tbody>';
     rows.forEach(function (c) {
       var parent = c.parent_id && byId[c.parent_id] ? byId[c.parent_id].name : "\u2014";
       html += "<tr>" +
         "<td><strong>" + esc(c.name) + "</strong><br><small class=\"muted\">" + esc(c.slug) + "</small></td>" +
         "<td>" + esc(parent) + "</td>" +
-        '<td class="muted">' + esc(c.icon || "\u2014") + "</td>" +
+        '<td>' + (c.image ? '<img class="category-thumb" src="' + esc(c.image) + '" alt="' + esc(c.name) + '" loading="lazy">' : '<span class="muted">\u2014</span>') + "</td>" +
         '<td class="mono">' + esc(c.sort) + "</td>" +
         "<td>" + statusBadge(c.active ? "Active" : "Inactive") + "</td>" +
         '<td><div class="actions">' +
@@ -870,13 +870,18 @@
     var activeRow = cat
       ? '<label class="check-row"><input type="checkbox" name="active"' + (cat.active ? " checked" : "") + "> Active</label>"
       : "";
+    var imageSrc = cat && cat.image ? esc(cat.image) : "";
     var html = modalHead(cat ? "Edit category" : "Add category", cat ? cat.slug : "Create a category or subcategory") +
       '<div class="modal-body"><form data-form="category" data-id="' + esc(cat ? cat.id : "") + '">' +
       '<div class="form-error" data-role="form-error" hidden></div>' +
       '<div class="form-grid">' +
       field("Name *", '<input name="name" value="' + esc(cat ? cat.name : "") + '" required maxlength="80">', true) +
       (cat ? "" : field("Parent", '<select name="parentId">' + parentOptions + "</select>")) +
-      field("Icon", '<input name="icon" value="' + esc(cat ? cat.icon || "" : "") + '" maxlength="10" placeholder="Emoji or short text">') +
+      field("Image URL", '<input name="image" value="' + imageSrc + '" maxlength="500" placeholder="/uploads/... or https://...">', true) +
+      '<div class="full upload-box">Upload category image (JPG, PNG, WEBP or GIF \u00B7 max 4 MB)' +
+      '<input type="file" accept="image/png,image/jpeg,image/gif,image/webp" data-action="upload-category-image"></div>' +
+      '<div class="full category-image-preview-wrap"><img class="category-image-preview" data-role="category-preview" src="' + imageSrc + '" alt="Category image preview"' + (imageSrc ? "" : " hidden") + '>' +
+      '<button class="btn small ghost" type="button" data-action="remove-category-image"' + (imageSrc ? "" : " hidden") + ">Remove image</button></div>" +
       field("Sort order", '<input name="sort" type="number" step="1" value="' + esc(cat ? cat.sort : 0) + '">') +
       (activeRow ? '<div class="full">' + activeRow + "</div>" : "") +
       "</div>" +
@@ -884,6 +889,29 @@
       '<button class="btn primary" type="submit">' + (cat ? "Save changes" : "Create category") + "</button></div>" +
       "</form></div>";
     openModal(html);
+    var form = $("#modal-root form[data-form=\"category\"]");
+    if (form) {
+      var imageInput = form.querySelector('[name="image"]');
+      if (imageInput) imageInput.addEventListener("input", function () { syncCategoryPreview(form); });
+      syncCategoryPreview(form);
+    }
+  }
+
+  function syncCategoryPreview(form) {
+    var input = form.querySelector('[name="image"]');
+    var preview = form.querySelector('[data-role="category-preview"]');
+    var removeBtn = form.querySelector('[data-action="remove-category-image"]');
+    if (!input || !preview) return;
+    var url = input.value.trim();
+    if (url) {
+      preview.src = url;
+      preview.hidden = false;
+      if (removeBtn) removeBtn.hidden = false;
+    } else {
+      preview.removeAttribute("src");
+      preview.hidden = true;
+      if (removeBtn) removeBtn.hidden = true;
+    }
   }
 
   async function saveCategory(form, button) {
@@ -892,7 +920,7 @@
     var name = String(fd.get("name") || "").trim();
     if (!name) return showFormError(form, "Category name is required.");
     var id = form.getAttribute("data-id");
-    var body = { name: name, icon: String(fd.get("icon") || ""), sort: Number(fd.get("sort") || 0) };
+    var body = { name: name, image: String(fd.get("image") || ""), sort: Number(fd.get("sort") || 0) };
     if (id) {
       body.active = form.querySelector('[name="active"]') ? form.querySelector('[name="active"]').checked : true;
     } else {
@@ -1405,6 +1433,13 @@
       return;
     }
     if (action === "close-modal") { closeModal(); return; }
+    if (action === "remove-category-image") {
+      var catForm = el.closest("form");
+      var catImage = catForm && catForm.querySelector('[name="image"]');
+      if (catImage) catImage.value = "";
+      if (catForm) syncCategoryPreview(catForm);
+      return;
+    }
     if (action === "change-password") { openPasswordModal(); return; }
     if (action === "logout") { logout(); return; }
     if (action === "retry") { route(); return; }
@@ -1499,6 +1534,10 @@
     }
     if (target.matches('[data-action="upload-banner"]')) {
       uploadBanner(target);
+      return;
+    }
+    if (target.matches('[data-action="upload-category-image"]')) {
+      uploadCategoryImage(target);
       return;
     }
     if (target.matches('[data-role="parent-cat"]')) {
@@ -1607,6 +1646,22 @@
       var field = form.querySelector('[name="image"]');
       if (field) field.value = res.url;
       toast("Banner image uploaded.", "success");
+    } catch (err) { toast(err.message, "error"); }
+    input.value = "";
+  }
+
+  async function uploadCategoryImage(input) {
+    var form = input.form;
+    var file = (input.files || [])[0];
+    if (!form || !file) return;
+    if (file.size > 4 * 1024 * 1024) { toast("Image is larger than 4 MB.", "error"); input.value = ""; return; }
+    try {
+      var dataUrl = await readFileAsDataUrl(file);
+      var res = await api("/api/admin/upload", { body: { data: dataUrl } });
+      var field = form.querySelector('[name="image"]');
+      if (field) field.value = res.url;
+      syncCategoryPreview(form);
+      toast("Category image uploaded.", "success");
     } catch (err) { toast(err.message, "error"); }
     input.value = "";
   }

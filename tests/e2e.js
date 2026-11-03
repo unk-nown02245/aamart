@@ -137,6 +137,7 @@ function errMsg(r) {
   r = await req("GET", "/api/categories");
   const cats = (r.data && r.data.categories) || [];
   check("category tree", r.status === 200 && cats.length > 0, "count " + cats.length);
+  check("category images present", cats.length > 0 && cats.every((c) => typeof c.image === "string" && c.image.length > 0), JSON.stringify(cats.filter((c) => !c.image).map((c) => c.name)));
 
   r = await req("GET", "/api/products?limit=50");
   const products = (r.data && r.data.products) || [];
@@ -361,12 +362,15 @@ function errMsg(r) {
   }
 
   // ---------------- Admin category / brand / banner / coupon ----------------
-  r = await req("POST", "/api/admin/categories", { token: superToken, body: { name: "E2E Category " + stamp, icon: "E", sort: 99 } });
+  r = await req("POST", "/api/admin/categories", { token: superToken, body: { name: "E2E Category " + stamp, icon: "E", image: "/img/categories/default.svg", sort: 99 } });
   check("admin create category", r.status === 201 && r.data.id, errMsg(r));
   const catId = r.data && r.data.id;
   if (catId) {
-    r = await req("PUT", "/api/admin/categories/" + encodeURIComponent(catId), { token: superToken, body: { name: "E2E Category Updated", icon: "E", sort: 98, active: true } });
-    check("admin update category", r.status === 200 && r.data.name === "E2E Category Updated", errMsg(r));
+    check("admin category image saved", r.data.image === "/img/categories/default.svg", r.data.image);
+    r = await req("PUT", "/api/admin/categories/" + encodeURIComponent(catId), { token: superToken, body: { image: "javascript:alert(1)" } });
+    check("admin reject invalid category image", r.status === 400, errMsg(r));
+    r = await req("PUT", "/api/admin/categories/" + encodeURIComponent(catId), { token: superToken, body: { name: "E2E Category Updated", icon: "E", image: "/img/categories/default.svg", sort: 98, active: true } });
+    check("admin update category", r.status === 200 && r.data.name === "E2E Category Updated" && r.data.image === "/img/categories/default.svg", errMsg(r));
     r = await req("DELETE", "/api/admin/categories/" + encodeURIComponent(catId), { token: superToken });
     check("admin delete category", r.status === 200 && r.data.deleted, errMsg(r));
   }

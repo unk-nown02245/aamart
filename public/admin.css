@@ -372,6 +372,26 @@ table.data .actions { display: flex; gap: 10px; flex-wrap: wrap; }
   background: #f1f5f9;
   flex: 0 0 auto;
 }
+.category-thumb {
+  width: 56px;
+  height: 42px;
+  border-radius: 8px;
+  object-fit: cover;
+  border: 1px solid var(--line);
+  background: #f1f5f9;
+  display: block;
+}
+.category-image-preview-wrap { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.category-image-preview {
+  width: 180px;
+  max-width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: #f1f5f9;
+  display: block;
+}
 .cell-product { display: flex; align-items: center; gap: 11px; min-width: 220px; }
 .cell-product strong { display: block; font-size: 13.5px; font-weight: 600; }
 .cell-product small { display: block; color: var(--muted); font-size: 11.5px; }
