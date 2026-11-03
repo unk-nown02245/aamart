@@ -382,6 +382,8 @@ table.data .actions { display: flex; gap: 10px; flex-wrap: wrap; }
   display: block;
 }
 .category-image-preview-wrap { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.category-image-preview[hidden],
+.category-image-preview-wrap .btn[hidden] { display: none !important; }
 .category-image-preview {
   width: 180px;
   max-width: 100%;
