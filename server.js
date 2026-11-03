@@ -484,7 +484,10 @@ function productList(filters) {
   }[f.sort] || "rating_count DESC, rating DESC";
 
   const limit = clampInt(f.limit, 1, 200, 40);
-  const offset = clampInt(f.offset, 0, 1000000, 0);
+  const page = clampInt(f.page, 1, 100000, 1);
+  const offset = f.offset != null && f.offset !== ""
+    ? clampInt(f.offset, 0, 1000000, 0)
+    : (page - 1) * limit;
   const whereSql = where.length ? " WHERE " + where.join(" AND ") : "";
   const total = db.prepare("SELECT COUNT(*) AS c FROM products" + whereSql).get(...params).c;
   const rows = db.prepare("SELECT * FROM products" + whereSql + " ORDER BY " + order + " LIMIT ? OFFSET ?").all(...params, limit, offset);
@@ -998,7 +1001,8 @@ async function handleApi(req, res, pathname, parsed) {
       sort: parsed.searchParams.get("sort") || "",
       featured: parsed.searchParams.get("featured") === "1",
       limit: parsed.searchParams.get("limit") || 40,
-      offset: parsed.searchParams.get("offset") || 0,
+      page: parsed.searchParams.get("page") || 1,
+      offset: parsed.searchParams.get("offset"),
     }));
   }
 
@@ -1158,8 +1162,9 @@ async function handleApi(req, res, pathname, parsed) {
       const a = normalizeAddress({ ...existing, ...body });
       if (a.error) return fail(res, 400, a.error);
       if (body.isDefault) db.prepare("UPDATE addresses SET is_default = 0 WHERE user_id = ?").run(user.id);
+      const isDefault = body.isDefault === undefined ? existing.is_default : (body.isDefault ? 1 : 0);
       db.prepare("UPDATE addresses SET name = ?, phone = ?, line1 = ?, line2 = ?, city = ?, state = ?, pincode = ?, type = ?, is_default = ? WHERE id = ?")
-        .run(a.name, a.phone, a.line1, a.line2, a.city, a.state, a.pincode, a.type, body.isDefault ? 1 : existing.is_default, existing.id);
+        .run(a.name, a.phone, a.line1, a.line2, a.city, a.state, a.pincode, a.type, isDefault, existing.id);
       return json(res, db.prepare("SELECT * FROM addresses WHERE id = ?").get(existing.id));
     }
 
@@ -1376,7 +1381,8 @@ async function handleApi(req, res, pathname, parsed) {
         category: parsed.searchParams.get("category") || "",
         status: parsed.searchParams.get("status") || "",
         limit: parsed.searchParams.get("limit") || 200,
-        offset: parsed.searchParams.get("offset") || 0,
+        page: parsed.searchParams.get("page") || 1,
+        offset: parsed.searchParams.get("offset"),
         sort: "newest",
       }));
     }

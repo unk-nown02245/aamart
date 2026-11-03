@@ -140,7 +140,7 @@ function showToast(message, type) {
 
 function showModal(html) {
   const root = $("#modal-root");
-  root.innerHTML = '<div class="modal-backdrop" data-action="close-modal"><div class="modal" role="dialog" aria-modal="true">' + html + "</div></div>";
+  root.innerHTML = '<div class="modal-backdrop"><div class="modal" role="dialog" aria-modal="true">' + html + "</div></div>";
   const backdrop = $(".modal-backdrop", root);
   if (backdrop) backdrop.addEventListener("click", (e) => { if (e.target === backdrop) closeModal(); });
 }
@@ -1443,8 +1443,10 @@ document.addEventListener("submit", async (e) => {
         city: fd.get("city"), state: fd.get("state"), pincode: fd.get("pincode"), type: fd.get("type"),
         isDefault: fd.get("isDefault") === "on",
       };
-      if (addressId) await api("/api/addresses/" + addressId, { method: "PUT", body });
-      else await api("/api/addresses", { method: "POST", body });
+      const saved = addressId
+        ? await api("/api/addresses/" + addressId, { method: "PUT", body })
+        : await api("/api/addresses", { method: "POST", body });
+      if (saved && saved.id && currentPath().startsWith("/checkout")) state.checkout.addressId = saved.id;
       closeModal();
       showToast("Address saved", "success");
       render();

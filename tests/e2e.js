@@ -109,6 +109,10 @@ function errMsg(r) {
   r = await req("GET", "/admin.js");
   check("admin js served", r.status === 200 && /aamart_admin_token/.test(r.text), "status " + r.status);
 
+  r = await req("GET", "/app.js");
+  check("storefront js served", r.status === 200 && /load-more/.test(r.text), "status " + r.status);
+  check("address modal backdrop safe", !/modal-backdrop" data-action="close-modal"/.test(r.text), "modal backdrop closes on inner clicks");
+
   r = await req("GET", "/robots.txt");
   check("robots.txt served", r.status === 200 && /Sitemap:/i.test(r.text), "status " + r.status);
 
@@ -138,9 +142,25 @@ function errMsg(r) {
   const products = (r.data && r.data.products) || [];
   check("product list", r.status === 200 && products.length > 0, "count " + products.length);
 
+  r = await req("GET", "/api/products?limit=1&page=1");
+  const firstPage = (r.data && r.data.products && r.data.products[0]) || {};
+  r = await req("GET", "/api/products?limit=1&page=2");
+  const secondPage = (r.data && r.data.products && r.data.products[0]) || {};
+  check("product pagination", r.status === 200 && firstPage.id && secondPage.id && firstPage.id !== secondPage.id, JSON.stringify({ first: firstPage.id, second: secondPage.id }));
+
+  if (products[0]) {
+    const keyword = String(products[0].title).split(/\s+/)[0];
+    r = await req("GET", "/api/products?q=" + encodeURIComponent(keyword));
+    check("product search", r.status === 200 && (r.data.products || []).length > 0, errMsg(r));
+  }
+
+  r = await req("GET", "/api/products?minPrice=9999999");
+  check("product price filter", r.status === 200 && (r.data.products || []).length === 0, errMsg(r));
+
   const target = products.filter(function (p) { return p.stock > 1 && p.price >= 500; })[0] || products[0];
   check("found test product", !!target, "no products");
   if (!target) return finish();
+  const targetVariant = target.variants && target.variants.length ? target.variants[0] : null;
 
   r = await req("GET", "/api/products/" + encodeURIComponent(target.id));
   check("product detail", r.status === 200 && r.data && r.data.id === target.id, errMsg(r));
@@ -166,6 +186,33 @@ function errMsg(r) {
   check("customer login", r.status === 200 && r.data.token, errMsg(r));
   customerToken = (r.data && r.data.token) || customerToken;
 
+  // ---------------- Profile + addresses ----------------
+  r = await req("PUT", "/api/auth/update", { token: customerToken, body: { name: "E2E Tester Updated", phone } });
+  check("customer profile update", r.status === 200 && r.data.user.name === "E2E Tester Updated", errMsg(r));
+
+  const addressBody = {
+    name: "E2E Tester Updated",
+    phone: "9876543210",
+    line1: "123 Test Street, Sector 5",
+    line2: "Near City Mall",
+    city: "New Delhi",
+    state: "Delhi",
+    pincode: "110001",
+    type: "Home",
+    isDefault: true,
+  };
+  r = await req("POST", "/api/addresses", { token: customerToken, body: addressBody });
+  check("address create", r.status === 201 && r.data.id, errMsg(r));
+  const addressId = r.data && r.data.id;
+
+  r = await req("GET", "/api/addresses", { token: customerToken });
+  check("address list", r.status === 200 && r.data.addresses.some(function (a) { return a.id === addressId; }), errMsg(r));
+
+  if (addressId) {
+    r = await req("PUT", "/api/addresses/" + encodeURIComponent(addressId), { token: customerToken, body: { line1: "456 Updated Street, Sector 9", isDefault: true } });
+    check("address update", r.status === 200 && r.data.line1 === "456 Updated Street, Sector 9", errMsg(r));
+  }
+
   r = await req("GET", "/api/cart");
   check("cart requires auth", r.status === 401, "status " + r.status);
 
@@ -173,12 +220,16 @@ function errMsg(r) {
   check("csrf enforced", r.status === 403, "status " + r.status);
 
   // ---------------- Cart / wishlist ----------------
-  r = await req("POST", "/api/cart", { token: customerToken, body: { productId: target.id, qty: 1 } });
+  r = await req("POST", "/api/cart", { token: customerToken, body: { productId: target.id, variant: targetVariant ? targetVariant.value : "", qty: 1 } });
   check("add to cart", r.status === 200 && r.data.added, errMsg(r));
 
   r = await req("GET", "/api/cart", { token: customerToken });
   const cart = r.data || {};
   check("cart contents", r.status === 200 && cart.items && cart.items.length === 1 && cart.count === 1, JSON.stringify(cart));
+  if (targetVariant && cart.items && cart.items[0]) {
+    const expectedPrice = targetVariant.price || target.price;
+    check("cart variant", cart.items[0].variant === targetVariant.value && cart.items[0].price === expectedPrice, JSON.stringify(cart.items[0]));
+  }
 
   if (cart.items && cart.items[0]) {
     r = await req("PUT", "/api/cart/" + cart.items[0].id, { token: customerToken, body: { qty: 1 } });
@@ -213,6 +264,7 @@ function errMsg(r) {
     type: "Home",
   };
   const useCoupon = target.price >= 499;
+  const stockBefore = target.stock;
   r = await req("POST", "/api/orders", {
     token: customerToken,
     body: { address, paymentMethod: "UPI", couponCode: "" },
@@ -232,6 +284,18 @@ function errMsg(r) {
 
   r = await req("GET", "/api/orders/" + encodeURIComponent(order.id), { token: customerToken });
   check("customer order detail", r.status === 200 && r.data.id === order.id, errMsg(r));
+
+  if (useCoupon) {
+    r = await req("POST", "/api/coupons/validate", { token: customerToken, body: { code: "WELCOME10", itemTotal: 1000 } });
+    check("coupon cannot be reused", r.status === 400, "status " + r.status);
+  }
+
+  if (addressId) {
+    r = await req("DELETE", "/api/addresses/" + encodeURIComponent(addressId), { token: customerToken });
+    check("address delete", r.status === 200 && r.data.deleted, errMsg(r));
+    r = await req("GET", "/api/addresses", { token: customerToken });
+    check("address removed", r.status === 200 && !r.data.addresses.some(function (a) { return a.id === addressId; }), errMsg(r));
+  }
 
   // ---------------- Admin auth ----------------
   r = await req("POST", "/api/admin/login", { body: { username: ADMIN.superUsername, password: "wrong-pass" } });
@@ -353,6 +417,19 @@ function errMsg(r) {
   check("admin create account", r.status === 201 && r.data.id, errMsg(r));
   const testAdminId = r.data && r.data.id;
   if (testAdminId) {
+    r = await req("POST", "/api/admin/login", { body: { username: testAdminName, password: "E2eTest1234" } });
+    check("temp admin login", r.status === 200 && r.data.token, errMsg(r));
+    const tempAdminToken = r.data && r.data.token;
+
+    r = await req("POST", "/api/admin/password", { token: tempAdminToken, body: { currentPassword: "E2eTest1234", newPassword: "E2eNewPass1234" } });
+    check("admin password change", r.status === 200 && r.data.token, errMsg(r));
+
+    r = await req("POST", "/api/admin/login", { body: { username: testAdminName, password: "E2eNewPass1234" } });
+    check("admin login with new password", r.status === 200 && r.data.token, errMsg(r));
+
+    r = await req("POST", "/api/admin/login", { body: { username: testAdminName, password: "E2eTest1234" } });
+    check("admin old password rejected", r.status === 401, "status " + r.status);
+
     r = await req("PUT", "/api/admin/admins/" + encodeURIComponent(testAdminId), { token: superToken, body: { name: "E2E Manager Updated", active: false } });
     check("admin update account", r.status === 200 && r.data.name === "E2E Manager Updated", errMsg(r));
     r = await req("DELETE", "/api/admin/admins/" + encodeURIComponent(testAdminId), { token: superToken });
@@ -377,6 +454,9 @@ function errMsg(r) {
 
   r = await req("POST", "/api/orders/" + encodeURIComponent(order.id) + "/cancel", { token: customerToken, body: {} });
   check("customer cancel order", r.status === 200 && r.data.status === "Cancelled", errMsg(r));
+
+  r = await req("GET", "/api/products/" + encodeURIComponent(target.id));
+  check("cancel restores stock", r.status === 200 && r.data.stock === stockBefore, JSON.stringify({ before: stockBefore, after: r.data && r.data.stock }));
 
   r = await req("PUT", "/api/admin/orders/" + encodeURIComponent(order.id) + "/status", { token: superToken, body: { status: "Delivered" } });
   check("closed order rejects update", r.status === 400, "status " + r.status);
