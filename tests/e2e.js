@@ -114,9 +114,11 @@ function errMsg(r) {
 
   r = await req("GET", "/sitemap.xml");
   check("sitemap.xml served", r.status === 200 && /<urlset/i.test(r.text), "status " + r.status);
+  check("sitemap content type", /xml/i.test(r.headers.get("content-type") || ""), r.headers.get("content-type"));
 
   r = await req("GET", "/manifest.webmanifest");
   check("manifest served", r.status === 200 && /"short_name"/.test(r.text), "status " + r.status);
+  check("manifest content type", /manifest\+json|application\/json/i.test(r.headers.get("content-type") || ""), r.headers.get("content-type"));
 
   r = await req("GET", "/img/favicon.svg");
   check("favicon served", r.status === 200 && /<svg/i.test(r.text), "status " + r.status);
