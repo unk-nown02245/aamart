@@ -1,5 +1,13 @@
 node_modules/
-data/
-uploads/
+data/*.db
+data/*.db-shm
+data/*.db-wal
+data/secret.json
+data/ADMIN-CREDENTIALS.txt
+uploads/*
+!uploads/.gitkeep
 .env
+.env.*
 *.log
+.DS_Store
+Thumbs.db

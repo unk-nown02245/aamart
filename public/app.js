@@ -24,6 +24,7 @@ const state = {
   otpSent: false,
   resetSent: false,
   reviewRating: 5,
+  listing: null,
   route: null,
   timers: [],
 };
@@ -76,6 +77,29 @@ function escapeHtml(v) {
   return String(v == null ? "" : v)
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+function safeHref(value) {
+  const raw = String(value == null ? "" : value).trim();
+  if (raw.startsWith("#/") || (raw.startsWith("/") && !raw.startsWith("//"))) return escapeHtml(raw);
+  try {
+    const parsed = new URL(raw, location.origin);
+    return parsed.protocol === "https:" || parsed.protocol === "http:" ? escapeHtml(parsed.href) : "#/";
+  } catch {
+    return "#/";
+  }
+}
+
+function safeImage(value) {
+  const raw = String(value == null ? "" : value).trim();
+  if ((raw.startsWith("/") && !raw.startsWith("//")) || /^https:\/\//i.test(raw)) return escapeHtml(raw);
+  return "/img/placeholder.svg";
+}
+
+function setMeta(title, description) {
+  document.title = title ? title + " - Aamart" : "Aamart - Online Shopping";
+  const meta = document.querySelector('meta[name="description"]');
+  if (meta && description) meta.setAttribute("content", description);
 }
 
 function money(n) {
@@ -235,7 +259,8 @@ function parseRoute() {
   if (head === "login") return { name: "login", query, path: pathPart };
   if (head === "register") return { name: "register", query, path: pathPart };
   if (head === "forgot") return { name: "forgot", query, path: pathPart };
-  return { name: "home", query, path: pathPart };
+  if (["privacy", "terms", "returns", "contact"].includes(head)) return { name: "page", page: head, query, path: pathPart };
+  return { name: "notfound", query, path: pathPart };
 }
 
 function currentPath() {
@@ -277,6 +302,8 @@ async function render() {
       case "login": return renderLogin(token, route);
       case "register": return renderRegister(token, route);
       case "forgot": return renderForgot(token, route);
+      case "page": return renderLegal(route.page);
+      case "notfound": return renderNotFound();
       default: return await renderHome(token);
     }
   } catch (e) {
@@ -317,7 +344,7 @@ function productCard(p) {
   return (
     '<article class="product-card">' +
       '<a class="pc-media" href="#/product/' + p.id + '">' +
-        '<img src="' + escapeHtml(p.image) + '" alt="' + escapeHtml(p.title) + '" loading="lazy">' +
+        '<img src="' + safeImage(p.image) + '" alt="' + escapeHtml(p.title) + '" loading="lazy">' +
         discount +
       "</a>" +
       '<button class="pc-wish' + wishActive + '" data-action="wishlist" data-id="' + p.id + '" aria-label="Add to wishlist">\u2665</button>' +
@@ -374,11 +401,12 @@ async function renderHome(token) {
 
   const banners = bannersRes.banners || [];
   const cats = state.categories.slice(0, 10);
+  setMeta("Online Shopping", "Shop electronics, fashion, home essentials and more at Aamart.");
 
   let html = "";
   if (banners.length) {
     html += '<div class="banner-slider"><div class="banner-track">' +
-      banners.map((b) => '<a class="banner-slide" href="' + escapeHtml(b.link || "#/") + '"><img src="' + escapeHtml(b.image) + '" alt="' + escapeHtml(b.title) + '"></a>').join("") +
+      banners.map((b) => '<a class="banner-slide" href="' + safeHref(b.link || "#/") + '"><img src="' + safeImage(b.image) + '" alt="' + escapeHtml(b.title) + '"></a>').join("") +
       '</div><div class="banner-dots">' + banners.map((_, i) => '<button class="' + (i === 0 ? "active" : "") + '" data-action="banner-dot" data-index="' + i + '" aria-label="Slide ' + (i + 1) + '"></button>').join("") + "</div></div>";
   }
 
@@ -389,7 +417,7 @@ async function renderHome(token) {
     "</div>";
 
   html += '<div class="section"><div class="section-head"><h2>' + t("categories") + '</h2><a href="#/categories">' + t("viewAll") + ' \u203A</a></div><div class="cat-strip">' +
-    cats.map((c) => '<a class="cat-chip" href="#/products?category=' + encodeURIComponent(c.slug) + '"><span class="emoji">' + (c.icon || "\u{1F3F7}") + '</span><span class="cname">' + escapeHtml(c.name) + '</span><span class="ccount">' + c.count + " items</span></a>").join("") +
+    cats.map((c) => '<a class="cat-chip" href="#/products?category=' + encodeURIComponent(c.slug) + '"><span class="emoji">' + escapeHtml(c.icon || "\u{1F3F7}") + '</span><span class="cname">' + escapeHtml(c.name) + '</span><span class="ccount">' + c.count + " items</span></a>").join("") +
     "</div></div>";
 
   html += '<div class="section">' + sectionHead(t("deals"), "#/products?sort=discount") + productRail(dealsRes.products) + "</div>";
@@ -428,11 +456,12 @@ async function renderCategories(token) {
   const data = await api("/api/categories", { auth: false });
   if (token !== renderToken) return;
   state.categories = data.categories || [];
+  setMeta("Shop by Category", "Browse all Aamart categories and find what you need.");
   const html = '<div class="page-head"><h1>' + t("categories") + "</h1></div>" +
     '<div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(150px,1fr))">' +
     state.categories.map((c) =>
       '<div class="card">' +
-        '<div class="row" style="gap:8px"><span style="font-size:26px">' + (c.icon || "\u{1F3F7}") + "</span><div><strong>" + escapeHtml(c.name) + '</strong><div class="muted small">' + c.count + " items</div></div></div>" +
+        '<div class="row" style="gap:8px"><span style="font-size:26px">' + escapeHtml(c.icon || "\u{1F3F7}") + "</span><div><strong>" + escapeHtml(c.name) + '</strong><div class="muted small">' + c.count + " items</div></div></div>" +
         '<div class="row wrap" style="gap:6px;margin-top:10px">' +
           '<a class="chip" href="#/products?category=' + encodeURIComponent(c.slug) + '">All</a>' +
           (c.subs || []).slice(0, 6).map((s) => '<a class="chip" href="#/products?sub=' + encodeURIComponent(s.slug) + '">' + escapeHtml(s.name) + "</a>").join("") +
@@ -459,6 +488,13 @@ async function renderProducts(token, route) {
   const data = await api("/api/products?" + params.toString(), { auth: false });
   if (token !== renderToken) return;
   state.categories = catsRes.categories || [];
+  state.listing = {
+    base: params.toString(),
+    page: 1,
+    total: Number(data.total) || 0,
+    loaded: (data.products || []).length,
+    loading: false,
+  };
   const brands = brandsRes.brands || [];
 
   const catOptions = '<option value="">All categories</option>' +
@@ -503,7 +539,10 @@ async function renderProducts(token, route) {
       "</form>" +
       '<div>' +
         (data.products.length
-          ? '<div class="product-grid">' + data.products.map(productCard).join("") + "</div>"
+          ? '<div id="product-grid" class="product-grid">' + data.products.map(productCard).join("") + "</div>" +
+            (state.listing.loaded < state.listing.total
+              ? '<div class="center" id="load-more-wrap" style="margin-top:16px"><button class="btn secondary" data-action="load-more">Load more products</button></div>'
+              : "")
           : emptyView("\u{1F50E}", "No products found", "Try changing your filters or search keywords.", "#/products", "Clear filters")) +
       "</div>" +
     "</div>";
@@ -521,6 +560,7 @@ async function renderProducts(token, route) {
 async function renderProduct(token, id) {
   const p = await api("/api/products/" + encodeURIComponent(id), { auth: false });
   if (token !== renderToken) return;
+  setMeta(p.title, p.description || ("Buy " + p.title + " at Aamart."));
 
   state.pd = { productId: p.id, variant: p.variants && p.variants.length ? p.variants[0].value : "", qty: 1, imageIndex: 0 };
   state.reviewRating = 5;
@@ -542,12 +582,12 @@ async function renderProduct(token, id) {
   });
   const variantHtml = Object.keys(variantGroups).map((type) =>
     '<div class="pd-variants"><div class="variant-label">' + escapeHtml(type) + '</div><div class="variant-options" data-variant-type="' + escapeHtml(type) + '">' +
-    variantGroups[type].map((v) => '<button class="variant-option' + (v.value === state.pd.variant ? " active" : "") + '" data-action="variant" data-type="' + escapeHtml(type) + '" data-value="' + escapeHtml(v.value) + '">' + escapeHtml(v.value) + (v.price && v.price !== p.price ? " \u00B7 " + money(v.price) : "") + "</button>").join("") +
+    variantGroups[type].map((v) => '<button class="variant-option' + (v.value === state.pd.variant ? " active" : "") + '" data-action="variant" data-type="' + escapeHtml(type) + '" data-value="' + escapeHtml(v.value) + '" data-price="' + Number(v.price || p.price) + '">' + escapeHtml(v.value) + (v.price && v.price !== p.price ? " \u00B7 " + money(v.price) : "") + "</button>").join("") +
     "</div></div>"
   ).join("");
 
   const thumbs = (p.images || []).map((src, i) =>
-    '<button data-action="thumb" data-index="' + i + '" class="' + (i === 0 ? "active" : "") + '"><img src="' + escapeHtml(src) + '" alt="' + escapeHtml(p.title) + " image " + (i + 1) + '"></button>'
+    '<button data-action="thumb" data-index="' + i + '" class="' + (i === 0 ? "active" : "") + '"><img src="' + safeImage(src) + '" alt="' + escapeHtml(p.title) + " image " + (i + 1) + '"></button>'
   ).join("");
 
   const specs = Object.entries(p.specs || {});
@@ -566,7 +606,7 @@ async function renderProduct(token, id) {
     '<div class="crumbs"><a href="#/">Home</a> \u203A <a href="#/products?category=' + encodeURIComponent(p.category) + '">' + escapeHtml(p.category) + '</a> \u203A ' + escapeHtml(p.sub) + "</div>" +
     '<div class="pd">' +
       '<div class="pd-gallery">' +
-        '<img id="pd-main-img" class="pd-main-img" src="' + escapeHtml(p.images[0]) + '" alt="' + escapeHtml(p.title) + '">' +
+        '<img id="pd-main-img" class="pd-main-img" src="' + safeImage(p.images[0]) + '" alt="' + escapeHtml(p.title) + '">' +
         '<div class="pd-thumbs">' + thumbs + "</div>" +
       "</div>" +
       '<div class="pd-info">' +
@@ -574,7 +614,7 @@ async function renderProduct(token, id) {
         '<h1 class="pd-title">' + escapeHtml(p.title) + "</h1>" +
         '<div class="pd-rating"><span class="rating-pill">' + Number(p.rating || 0).toFixed(1) + ' \u2605</span><span class="muted small">' + (p.ratingCount || 0) + " ratings</span>" +
           (p.stock > 0 ? '<span class="pc-stock in small">\u2713 ' + t("inStock") + "</span>" : '<span class="pc-stock out small">' + t("outOfStock") + "</span>") + "</div>" +
-        '<div class="pd-price"><span class="now">' + money(p.price) + '</span>' +
+        '<div class="pd-price"><span class="now" id="pd-price-now">' + money(p.price) + '</span>' +
           (p.mrp > p.price ? '<span class="mrp">' + money(p.mrp) + "</span>" : "") +
           (p.discount > 0 ? '<span class="off">' + p.discount + "% off</span>" : "") + "</div>" +
         '<div class="muted small">Inclusive of all taxes \u00B7 SKU: ' + escapeHtml(p.sku || "-") + "</div>" +
@@ -822,7 +862,7 @@ async function renderOrder(token, id) {
     '<div class="page-head"><h1>Order #' + escapeHtml(o.orderNo) + '</h1><span class="status ' + statusClass(o.status) + '">' + escapeHtml(o.status) + "</span></div>" +
     '<div class="card"><div class="card-title">Tracking</div><div class="timeline">' + timeline + cancelStep + "</div></div>" +
     '<div class="card"><div class="card-title">Items (' + o.items.length + ")</div>" +
-      o.items.map((it) => '<div class="cart-item"><img src="' + escapeHtml(it.image || "/img/placeholder.svg") + '" alt="' + escapeHtml(it.name) + '">' +
+      o.items.map((it) => '<div class="cart-item"><img src="' + safeImage(it.image || "/img/placeholder.svg") + '" alt="' + escapeHtml(it.name) + '">' +
         '<div><a class="ci-title" href="#/product/' + it.productId + '">' + escapeHtml(it.name) + "</a>" +
         (it.variant ? '<div class="ci-meta">' + escapeHtml(it.variant) + "</div>" : "") +
         '<div class="ci-meta">Qty: ' + it.qty + " \u00D7 " + money(it.price) + '</div><div class="ci-price">' + money(it.price * it.qty) + "</div></div></div>").join("") +
@@ -902,7 +942,7 @@ async function renderAccount(token) {
             '<div class="field"><label>Full name</label><input class="input" name="name" value="' + escapeHtml(u.name) + '" required></div>' +
             '<div class="field"><label>Email address</label><input class="input" value="' + escapeHtml(u.email) + '" disabled></div>' +
             '<div class="field"><label>Mobile number</label><input class="input" name="phone" value="' + escapeHtml(u.phone) + '" maxlength="10" required></div>' +
-            '<div class="field-row"><div class="field"><label>New password (optional)</label><input class="input" type="password" name="password" minlength="6" placeholder="Leave blank to keep"></div>' +
+            '<div class="field-row"><div class="field"><label>New password (optional)</label><input class="input" type="password" name="password" minlength="10" placeholder="Leave blank to keep"></div>' +
             '<div class="field"><label>Current password</label><input class="input" type="password" name="currentPassword" placeholder="Required to change"></div></div>' +
             '<button class="btn" type="submit">Save Changes</button>' +
           "</form>" +
@@ -929,25 +969,29 @@ async function renderWishlist(token) {
 function renderLogin(token, route) {
   if (isLoggedIn()) { go("/account"); return; }
   const next = route.query.next || "/";
-  const otpMode = state.otpMode === "otp";
+  const otpAvailable = !!(state.settings && state.settings.otpLoginEnabled);
+  const otpMode = otpAvailable && state.otpMode === "otp";
+  setMeta("Login");
   const body = otpMode
     ? '<div class="field"><label>Email address</label><input class="input" name="email" type="email" value="' + escapeHtml(state.otpEmail) + '" required ' + (state.otpSent ? "readonly" : "") + '></div>' +
       (state.otpSent
         ? '<div class="field"><label>Enter OTP</label><input class="input" name="otp" inputmode="numeric" maxlength="6" placeholder="6-digit OTP" required></div>' +
-          '<div class="field"><label>Your name (for new accounts)</label><input class="input" name="name" placeholder="Full name"></div>' +
-          '<button class="btn block" type="submit">Verify & Login</button>' +
-          '<p class="muted small center" style="margin-top:8px">Demo OTP: <strong>' + escapeHtml(state.demoOtp || "check server log") + "</strong></p>"
+          '<button class="btn block" type="submit">Verify &amp; Login</button>'
         : '<button class="btn block" type="submit">Send OTP</button>')
     : '<div class="field"><label>Email address</label><input class="input" name="email" type="email" autocomplete="email" required placeholder="you@example.com"></div>' +
       '<div class="field"><label>Password</label><input class="input" name="password" type="password" autocomplete="current-password" required placeholder="Enter your password"></div>' +
       '<button class="btn block" type="submit">' + t("login") + "</button>" +
-      '<div class="row between" style="margin-top:10px"><button type="button" class="link small" data-action="switch-otp">Login with OTP</button><a class="link small" href="#/forgot">Forgot password?</a></div>';
+      (otpAvailable
+        ? '<div class="row between" style="margin-top:10px"><button type="button" class="link small" data-action="switch-otp">Login with OTP</button><a class="link small" href="#/forgot">Forgot password?</a></div>'
+        : '<div class="muted small" style="margin-top:10px">Password reset is currently unavailable. Please contact support.</div>');
 
   $("#app").innerHTML =
     '<div class="auth-wrap"><div class="auth-card">' +
       '<h1>' + (otpMode ? "OTP Login" : "Welcome back") + "</h1>" +
       '<p class="muted small">Login to your Aamart account to continue shopping.</p>' +
-      '<div class="tabs"><button type="button" class="' + (!otpMode ? "active" : "") + '" data-action="login-tab" data-mode="password">Password</button><button type="button" class="' + (otpMode ? "active" : "") + '" data-action="login-tab" data-mode="otp">OTP</button></div>' +
+      (otpAvailable
+        ? '<div class="tabs"><button type="button" class="' + (!otpMode ? "active" : "") + '" data-action="login-tab" data-mode="password">Password</button><button type="button" class="' + (otpMode ? "active" : "") + '" data-action="login-tab" data-mode="otp">OTP</button></div>'
+        : "") +
       '<form data-form="' + (otpMode ? (state.otpSent ? "otp-verify" : "otp-send") : "login") + '" data-next="' + escapeHtml(next) + '">' + body + "</form>" +
       '<div class="auth-alt">New to Aamart? <a href="#/register">Create an account</a></div>' +
       '<div class="auth-alt" style="margin-top:6px"><a href="#/">Continue as guest</a></div>' +
@@ -964,7 +1008,7 @@ function renderRegister(token, route) {
         '<div class="field"><label>Full name</label><input class="input" name="name" required placeholder="Your full name"></div>' +
         '<div class="field"><label>Email address</label><input class="input" name="email" type="email" required placeholder="you@example.com"></div>' +
         '<div class="field"><label>Mobile number</label><input class="input" name="phone" inputmode="numeric" maxlength="10" required placeholder="10-digit mobile number"></div>' +
-        '<div class="field"><label>Password</label><input class="input" name="password" type="password" minlength="6" required placeholder="At least 6 characters"></div>' +
+        '<div class="field"><label>Password</label><input class="input" name="password" type="password" minlength="10" required placeholder="10+ characters with upper, lower and number"></div>' +
         '<button class="btn block" type="submit">' + t("register") + "</button>" +
       "</form>" +
       '<div class="auth-alt">Already have an account? <a href="#/login">Login</a></div>' +
@@ -972,12 +1016,21 @@ function renderRegister(token, route) {
 }
 
 function renderForgot(token, route) {
+  setMeta("Reset Password");
+  const otpAvailable = !!(state.settings && state.settings.otpLoginEnabled);
+  if (!otpAvailable) {
+    $("#app").innerHTML =
+      '<div class="auth-wrap"><div class="auth-card">' +
+        '<h1>Reset password</h1><p class="muted small">Password reset is not configured yet. Please contact support to recover your account.</p>' +
+        '<div class="auth-alt"><a href="#/login">Back to login</a></div>' +
+      "</div></div>";
+    return;
+  }
   const body = state.resetSent
     ? '<div class="field"><label>Email address</label><input class="input" name="email" type="email" value="' + escapeHtml(state.otpEmail) + '" readonly></div>' +
       '<div class="field"><label>Reset OTP</label><input class="input" name="otp" inputmode="numeric" maxlength="6" required placeholder="6-digit OTP"></div>' +
-      '<div class="field"><label>New password</label><input class="input" name="password" type="password" minlength="6" required placeholder="At least 6 characters"></div>' +
-      '<button class="btn block" type="submit">Reset Password</button>' +
-      '<p class="muted small center" style="margin-top:8px">Demo OTP: <strong>' + escapeHtml(state.demoOtp || "check server log") + "</strong></p>"
+      '<div class="field"><label>New password</label><input class="input" name="password" type="password" minlength="10" required placeholder="10+ characters with upper, lower and number"></div>' +
+      '<button class="btn block" type="submit">Reset Password</button>'
     : '<div class="field"><label>Registered email address</label><input class="input" name="email" type="email" required placeholder="you@example.com"></div>' +
       '<button class="btn block" type="submit">Send Reset OTP</button>';
   $("#app").innerHTML =
@@ -986,6 +1039,50 @@ function renderForgot(token, route) {
       '<form data-form="' + (state.resetSent ? "reset-password" : "forgot-send") + '">' + body + "</form>" +
       '<div class="auth-alt"><a href="#/login">Back to login</a></div>' +
     "</div></div>";
+}
+
+/* ---------------------------------------------------------------------------
+   Static pages
+   --------------------------------------------------------------------------- */
+function renderLegal(page) {
+  const settings = state.settings || {};
+  const contactEmail = escapeHtml(settings.supportEmail || "support@aamart.in");
+  const contactPhone = escapeHtml(settings.supportPhone || "");
+  const pages = {
+    privacy: {
+      title: "Privacy Policy",
+      body: "<p>Aamart collects only the information needed to process your orders: your name, email, phone number and delivery address. We do not sell your personal data.</p>" +
+        "<p>Passwords are stored as salted hashes. Payment information is never stored on our servers. You can request account deletion by contacting support.</p>",
+    },
+    terms: {
+      title: "Terms of Service",
+      body: "<p>By using Aamart you agree to provide accurate account and delivery information, and to use the store only for lawful purchases.</p>" +
+        "<p>Product availability, prices and offers may change without notice. Orders may be cancelled if stock is unavailable or if fraud is suspected.</p>",
+    },
+    returns: {
+      title: "Returns & Refunds",
+      body: "<p>Most products can be returned within 7 days of delivery in unused condition with original packaging. Damaged or wrong items should be reported within 48 hours.</p>" +
+        "<p>Cash on Delivery refunds are processed to a bank account or UPI ID shared by the customer after the return is approved.</p>",
+    },
+    contact: {
+      title: "Contact Us",
+      body: "<p>Need help with an order, return or your account? Our support team is here to help.</p>" +
+        '<p>Email: <a class="link" href="mailto:' + contactEmail + '">' + contactEmail + "</a>" +
+        (contactPhone ? "<br>Phone: " + contactPhone : "") + "</p>" +
+        (settings.address ? "<p>Business address:<br>" + escapeHtml(settings.address) + "</p>" : ""),
+    },
+  };
+  const entry = pages[page] || pages.contact;
+  setMeta(entry.title);
+  $("#app").innerHTML =
+    '<div class="page-head"><h1>' + escapeHtml(entry.title) + "</h1></div>" +
+    '<div class="card card-pad legal-page">' + entry.body + "</div>";
+}
+
+function renderNotFound() {
+  setMeta("Page Not Found");
+  $("#app").innerHTML = '<div class="page-head"><h1>Page not found</h1></div>' +
+    emptyView("\u{1F50E}", "We couldn't find that page", "The link may be broken or the page may have moved.", "#/", "Go to Home");
 }
 
 /* ---------------------------------------------------------------------------
@@ -1047,6 +1144,35 @@ async function handleAction(action, el) {
     return;
   }
 
+  if (action === "load-more") {
+    const listing = state.listing;
+    if (!listing || listing.loading || listing.loaded >= listing.total) return;
+    listing.loading = true;
+    el.disabled = true;
+    try {
+      const params = new URLSearchParams(listing.base);
+      params.set("page", String(listing.page + 1));
+      const data = await api("/api/products?" + params.toString(), { auth: false });
+      const grid = $("#product-grid");
+      if (grid) grid.insertAdjacentHTML("beforeend", (data.products || []).map(productCard).join(""));
+      listing.page += 1;
+      listing.loaded += (data.products || []).length;
+      listing.total = Number(data.total) || listing.total;
+      const wrap = $("#load-more-wrap");
+      if (!data.products || !data.products.length || listing.loaded >= listing.total) {
+        if (wrap) wrap.remove();
+      } else {
+        el.disabled = false;
+      }
+    } catch (e) {
+      el.disabled = false;
+      showToast(e.message, "error");
+    } finally {
+      listing.loading = false;
+    }
+    return;
+  }
+
   if (action === "thumb") {
     const i = Number(el.dataset.index);
     state.pd.imageIndex = i;
@@ -1065,6 +1191,8 @@ async function handleAction(action, el) {
     const value = el.dataset.value;
     state.pd.variant = value;
     $$('.variant-option[data-type="' + CSS.escape(type) + '"]').forEach((b) => b.classList.toggle("active", b.dataset.value === value));
+    const priceEl = $("#pd-price-now");
+    if (priceEl && el.dataset.price) priceEl.textContent = money(Number(el.dataset.price));
     return;
   }
 
@@ -1185,6 +1313,7 @@ async function handleAction(action, el) {
   }
   if (action === "close-modal") { closeModal(); return; }
   if (action === "logout") {
+    try { await api("/api/auth/logout", { method: "POST" }); } catch (e) {}
     clearAuth();
     showToast("Logged out", "success");
     go("/");
@@ -1255,18 +1384,17 @@ document.addEventListener("submit", async (e) => {
 
     if (kind === "otp-send") {
       setBusy(true, "Sending OTP...");
-      const data = await api("/api/auth/send-otp", { method: "POST", auth: false, body: { email: fd.get("email") } });
+      await api("/api/auth/send-otp", { method: "POST", auth: false, body: { email: fd.get("email") } });
       state.otpEmail = String(fd.get("email"));
       state.otpSent = true;
-      state.demoOtp = data.demoOtp;
-      showToast("OTP sent to your email", "success");
+      showToast("If the account exists, an OTP has been sent", "success");
       render();
       return;
     }
 
     if (kind === "otp-verify") {
       setBusy(true, "Verifying...");
-      const data = await api("/api/auth/verify-otp", { method: "POST", auth: false, body: { email: fd.get("email"), otp: fd.get("otp"), name: fd.get("name") } });
+      const data = await api("/api/auth/verify-otp", { method: "POST", auth: false, body: { email: fd.get("email"), otp: fd.get("otp") } });
       saveToken(data.token, data.user);
       state.otpSent = false;
       await afterLogin();
@@ -1277,10 +1405,9 @@ document.addEventListener("submit", async (e) => {
 
     if (kind === "forgot-send") {
       setBusy(true, "Sending OTP...");
-      const data = await api("/api/auth/forgot-password", { method: "POST", auth: false, body: { email: fd.get("email") } });
+      await api("/api/auth/forgot-password", { method: "POST", auth: false, body: { email: fd.get("email") } });
       state.otpEmail = String(fd.get("email"));
       state.resetSent = true;
-      state.demoOtp = data.demoOtp || "";
       showToast("If the account exists, an OTP has been sent", "success");
       render();
       return;
@@ -1301,7 +1428,8 @@ document.addEventListener("submit", async (e) => {
         method: "PUT",
         body: { name: fd.get("name"), phone: fd.get("phone"), password: fd.get("password") || undefined, currentPassword: fd.get("currentPassword") || undefined },
       });
-      state.user = data.user;
+      if (data.token) saveToken(data.token, data.user);
+      else state.user = data.user;
       showToast("Profile updated", "success");
       render();
       return;
@@ -1423,8 +1551,11 @@ function setupLang() {
 async function boot() {
   setupSearch();
   setupLang();
+  const year = $("#footer-year");
+  if (year) year.textContent = new Date().getFullYear();
   window.addEventListener("hashchange", render);
   if (!location.hash) location.hash = "#/";
+  state.settings = await api("/api/settings", { auth: false }).catch(() => null);
   if (state.token) await afterLogin();
   await render();
 }

@@ -183,7 +183,17 @@
     setTimeout(function () { el.remove(); }, 3400);
   }
 
-  function logout() {
+  async function logout() {
+    if (state.token) {
+      try {
+        await ensureCsrf();
+        await fetch("/api/admin/logout", {
+          method: "POST",
+          headers: { Authorization: "Bearer " + state.token, "X-CSRF-Token": getCookie("csrf") },
+          credentials: "same-origin",
+        });
+      } catch (e) {}
+    }
     try {
       localStorage.removeItem(TOKEN_KEY);
       localStorage.removeItem(ADMIN_KEY);
@@ -314,8 +324,11 @@
       '</div><button type="button" class="modal-close" data-action="close-modal" aria-label="Close">&times;</button></div>';
   }
 
+  var lastFocused = null;
+
   function openModal(html, wide) {
     var root = $("#modal-root");
+    lastFocused = document.activeElement;
     root.innerHTML = '<div class="modal-overlay" data-action="modal-backdrop"><div class="modal' + (wide ? " wide" : "") + '" role="dialog" aria-modal="true">' + html + "</div></div>";
     document.body.style.overflow = "hidden";
     setTimeout(function () {
@@ -328,7 +341,32 @@
     var root = $("#modal-root");
     if (root) root.innerHTML = "";
     document.body.style.overflow = "";
+    if (lastFocused && typeof lastFocused.focus === "function") lastFocused.focus();
+    lastFocused = null;
   }
+
+  document.addEventListener("keydown", function (event) {
+    var modal = $("#modal-root .modal");
+    if (!modal) return;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeModal();
+      return;
+    }
+    if (event.key !== "Tab") return;
+    var focusable = Array.from(modal.querySelectorAll("a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])"))
+      .filter(function (el) { return el.offsetParent !== null; });
+    if (!focusable.length) return;
+    var first = focusable[0];
+    var last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  });
 
   function showFormError(form, message) {
     var box = form.querySelector('[data-role="form-error"]');
@@ -1115,6 +1153,7 @@
   async function viewSettings() {
     var data = await api("/api/admin/settings");
     var s = data.settings || {};
+    var online = data.onlinePaymentsEnabled === true;
     var html = pageHead("Store settings", "These values control the storefront and checkout");
     html += '<div class="card card-pad"><form data-form="settings">' +
       '<div class="form-error" data-role="form-error" hidden></div>' +
@@ -1125,27 +1164,28 @@
       field("Tax percent", '<input name="taxPercent" type="number" min="0" step="0.01" value="' + esc(s.taxPercent || 0) + '">') +
       field("Delivery charge (\u20B9)", '<input name="deliveryCharge" type="number" min="0" step="0.01" value="' + esc(s.deliveryCharge || 0) + '">') +
       field("Free delivery above (\u20B9)", '<input name="freeDeliveryAbove" type="number" min="0" step="0.01" value="' + esc(s.freeDeliveryAbove || 0) + '">') +
-      field("UPI ID", '<input name="upiId" value="' + esc(s.upiId || "") + '" maxlength="120">') +
+      field("UPI ID", '<input name="upiId" value="' + esc(s.upiId || "") + '" maxlength="120"' + (online ? "" : " disabled") + ">") +
       field("Support email", '<input name="supportEmail" type="email" value="' + esc(s.supportEmail || "") + '" maxlength="120">') +
       field("Support phone", '<input name="supportPhone" value="' + esc(s.supportPhone || "") + '" maxlength="20">') +
       '<label class="field full"><span>Business address</span><textarea name="address" rows="2" maxlength="300">' + esc(s.address || "") + "</textarea></label>" +
       "</div>" +
       '<div class="section-title">Payment methods</div>' +
+      '<p class="muted small" style="margin:0 0 10px">Online payment methods stay hidden and cannot be used at checkout until a payment gateway is configured on the server. Cash on Delivery is the only active method right now.</p>' +
       '<div class="form-grid">' +
       toggle("Cash on Delivery", "codEnabled", s.codEnabled) +
-      toggle("UPI", "upiEnabled", s.upiEnabled) +
-      toggle("Credit / Debit card", "cardEnabled", s.cardEnabled) +
-      toggle("Net banking", "netbankingEnabled", s.netbankingEnabled) +
-      toggle("Wallet", "walletEnabled", s.walletEnabled) +
+      toggle("UPI", "upiEnabled", s.upiEnabled, !online) +
+      toggle("Credit / Debit card", "cardEnabled", s.cardEnabled, !online) +
+      toggle("Net banking", "netbankingEnabled", s.netbankingEnabled, !online) +
+      toggle("Wallet", "walletEnabled", s.walletEnabled, !online) +
       "</div>" +
       '<div class="form-actions"><button class="btn primary" type="submit">Save settings</button></div>' +
       "</form></div>";
     $("#view").innerHTML = html;
   }
 
-  function toggle(label, name, value) {
+  function toggle(label, name, value, disabled) {
     var on = value === "1" || value === 1 || value === true;
-    return '<label class="check-row"><input type="checkbox" name="' + name + '"' + (on ? " checked" : "") + "> " + esc(label) + "</label>";
+    return '<label class="check-row"><input type="checkbox" name="' + name + '"' + (on ? " checked" : "") + (disabled ? " disabled" : "") + "> " + esc(label) + "</label>";
   }
 
   async function saveSettings(form, button) {
@@ -1205,7 +1245,7 @@
       '<div class="form-grid">' +
       (admin ? "" : field("Username *", '<input name="username" required maxlength="40" autocapitalize="none" spellcheck="false" placeholder="lowercase letters and numbers">')) +
       field("Display name", '<input name="name" value="' + esc(a.name || "") + '" maxlength="80">') +
-      field(admin ? "New password" : "Password *", '<input name="password" type="password" minlength="6" ' + (admin ? 'placeholder="Leave blank to keep current"' : "required") + '>') +
+      field(admin ? "New password" : "Password *", '<input name="password" type="password" minlength="10" ' + (admin ? 'placeholder="Leave blank to keep current"' : "required") + '>') +
       (admin ? "" : field("Role", '<select name="role"><option value="manager">Manager</option><option value="super">Super Admin</option></select>')) +
       (admin ? '<label class="check-row full"><input type="checkbox" name="active"' + (a.active ? " checked" : "") + "> Active</label>" : "") +
       "</div>" +
@@ -1220,7 +1260,7 @@
     var password = String(fd.get("password") || "");
     var body = { name: String(fd.get("name") || "") };
     if (password) {
-      if (password.length < 6) return showFormError(form, "Password must be at least 6 characters.");
+      if (password.length < 10) return showFormError(form, "Password must be at least 10 characters with uppercase, lowercase and a number.");
       body.password = password;
     }
     if (id) {
@@ -1246,8 +1286,41 @@
     }
   }
 
+  function openPasswordModal() {
+    openModal(modalHead("Change password", "Use at least 10 characters with uppercase, lowercase and a number") +
+      '<div class="modal-body"><form data-form="admin-password">' +
+      '<div class="form-error" data-role="form-error" hidden></div>' +
+      field("Current password", '<input name="currentPassword" type="password" autocomplete="current-password" required>', true) +
+      field("New password", '<input name="newPassword" type="password" autocomplete="new-password" minlength="10" required>', true) +
+      field("Confirm new password", '<input name="confirmPassword" type="password" autocomplete="new-password" minlength="10" required>', true) +
+      '<div class="form-actions"><button class="btn" type="button" data-action="close-modal">Cancel</button>' +
+      '<button class="btn primary" type="submit">Update password</button></div></form></div>');
+  }
+
+  async function saveAdminPassword(form, button) {
+    clearFormError(form);
+    var fd = new FormData(form);
+    var next = String(fd.get("newPassword") || "");
+    if (next !== String(fd.get("confirmPassword") || "")) return showFormError(form, "New passwords do not match.");
+    btnLabel(button, "Updating\u2026");
+    try {
+      var res = await api("/api/admin/password", {
+        body: { currentPassword: fd.get("currentPassword"), newPassword: next },
+      });
+      if (res.token) {
+        state.token = res.token;
+        try { localStorage.setItem(TOKEN_KEY, res.token); } catch (e) {}
+      }
+      toast("Password updated. Other sessions have been signed out.", "success");
+      closeModal();
+    } catch (err) {
+      showFormError(form, err.message);
+      btnReset(button);
+    }
+  }
+
   // ---------------------------------------------------------------------------
-  // Inventory / logs
+  // Inventory
   // ---------------------------------------------------------------------------
   async function viewInventory() {
     var data = await api("/api/admin/inventory");
@@ -1332,6 +1405,7 @@
       return;
     }
     if (action === "close-modal") { closeModal(); return; }
+    if (action === "change-password") { openPasswordModal(); return; }
     if (action === "logout") { logout(); return; }
     if (action === "retry") { route(); return; }
     if (action === "toggle-menu") { toggleSidebar(); return; }
@@ -1412,6 +1486,7 @@
     if (kind === "coupon") { saveCoupon(form, button); return; }
     if (kind === "settings") { saveSettings(form, button); return; }
     if (kind === "admin") { saveAdmin(form, button); return; }
+    if (kind === "admin-password") { saveAdminPassword(form, button); return; }
     if (kind === "order-status") { saveOrderStatus(form, button); return; }
   });
 

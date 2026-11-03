@@ -1,6 +1,38 @@
 "use strict";
 
+const fs = require("node:fs");
+const path = require("node:path");
+
 const BASE = "http://localhost:4000";
+
+function loadAdminCredentials() {
+  const creds = {
+    superUsername: "amirhamza",
+    superPassword: process.env.AAMART_SUPER_PASSWORD || "",
+    managerUsername: "aditism",
+    managerPassword: process.env.AAMART_MANAGER_PASSWORD || "",
+  };
+  try {
+    const file = path.join(__dirname, "..", "data", "ADMIN-CREDENTIALS.txt");
+    const text = fs.readFileSync(file, "utf8");
+    for (const line of text.split(/\r?\n/)) {
+      const m = /^(super|manager)\s+\(([^)]+)\):\s+(.+)$/.exec(line.trim());
+      if (!m) continue;
+      if (m[1] === "super") {
+        creds.superUsername = m[2];
+        creds.superPassword = m[3];
+      } else {
+        creds.managerUsername = m[2];
+        creds.managerPassword = m[3];
+      }
+    }
+  } catch (e) {
+    // No generated credentials file; fall back to environment values.
+  }
+  return creds;
+}
+
+const ADMIN = loadAdminCredentials();
 let csrf = "";
 let pass = 0;
 let fail = 0;
@@ -77,6 +109,21 @@ function errMsg(r) {
   r = await req("GET", "/admin.js");
   check("admin js served", r.status === 200 && /aamart_admin_token/.test(r.text), "status " + r.status);
 
+  r = await req("GET", "/robots.txt");
+  check("robots.txt served", r.status === 200 && /Sitemap:/i.test(r.text), "status " + r.status);
+
+  r = await req("GET", "/sitemap.xml");
+  check("sitemap.xml served", r.status === 200 && /<urlset/i.test(r.text), "status " + r.status);
+
+  r = await req("GET", "/manifest.webmanifest");
+  check("manifest served", r.status === 200 && /"short_name"/.test(r.text), "status " + r.status);
+
+  r = await req("GET", "/img/favicon.svg");
+  check("favicon served", r.status === 200 && /<svg/i.test(r.text), "status " + r.status);
+
+  r = await req("GET", "/this-page-does-not-exist-" + Date.now());
+  check("unknown page soft 404", r.status === 404 && /Page not found/i.test(r.text), "status " + r.status);
+
   // ---------------- Catalog ----------------
   r = await req("GET", "/api/settings");
   check("public settings", r.status === 200 && r.data && r.data.siteName, errMsg(r));
@@ -101,14 +148,19 @@ function errMsg(r) {
   const email = "e2e_" + stamp + "@aamart.test";
   const phone = "98" + String(Date.now()).slice(-8);
 
+  const customerPassword = "E2eTest1234";
+
   r = await req("POST", "/api/auth/register", { body: { name: "E2E Tester", email, phone, password: "test1234" } });
+  check("weak password rejected", r.status === 400, "status " + r.status);
+
+  r = await req("POST", "/api/auth/register", { body: { name: "E2E Tester", email, phone, password: customerPassword } });
   check("customer register", r.status === 201 && r.data && r.data.token, errMsg(r));
   let customerToken = r.data && r.data.token;
 
   r = await req("GET", "/api/auth/me", { token: customerToken });
   check("customer me", r.status === 200 && r.data.user.email === email, errMsg(r));
 
-  r = await req("POST", "/api/auth/login", { body: { email, password: "test1234" } });
+  r = await req("POST", "/api/auth/login", { body: { email, password: customerPassword } });
   check("customer login", r.status === 200 && r.data.token, errMsg(r));
   customerToken = (r.data && r.data.token) || customerToken;
 
@@ -161,6 +213,12 @@ function errMsg(r) {
   const useCoupon = target.price >= 499;
   r = await req("POST", "/api/orders", {
     token: customerToken,
+    body: { address, paymentMethod: "UPI", couponCode: "" },
+  });
+  check("online payment rejected", r.status === 400 && /not available/i.test(errMsg(r)), errMsg(r));
+
+  r = await req("POST", "/api/orders", {
+    token: customerToken,
     body: { address, paymentMethod: "COD", couponCode: useCoupon ? "WELCOME10" : "" },
   });
   check("place order", r.status === 201 && r.data && r.data.orderNo, errMsg(r));
@@ -174,15 +232,18 @@ function errMsg(r) {
   check("customer order detail", r.status === 200 && r.data.id === order.id, errMsg(r));
 
   // ---------------- Admin auth ----------------
-  r = await req("POST", "/api/admin/login", { body: { username: "amirhamza", password: "wrong-pass" } });
+  r = await req("POST", "/api/admin/login", { body: { username: ADMIN.superUsername, password: "wrong-pass" } });
   check("admin rejects bad password", r.status === 401, "status " + r.status);
 
-  r = await req("POST", "/api/admin/login", { body: { username: "amirhamza", password: "akib@123" } });
+  r = await req("POST", "/api/admin/login", { body: { username: ADMIN.superUsername, password: ADMIN.superPassword }, noCsrf: true });
+  check("admin login requires csrf", r.status === 403, "status " + r.status);
+
+  r = await req("POST", "/api/admin/login", { body: { username: ADMIN.superUsername, password: ADMIN.superPassword } });
   check("super admin login", r.status === 200 && r.data.token && r.data.admin.role === "super", errMsg(r));
   const superToken = r.data && r.data.token;
 
   r = await req("GET", "/api/admin/me", { token: superToken });
-  check("admin me", r.status === 200 && r.data.admin.username === "amirhamza", errMsg(r));
+  check("admin me", r.status === 200 && r.data.admin.username === ADMIN.superUsername, errMsg(r));
 
   r = await req("GET", "/api/admin/stats", { token: superToken });
   check("admin stats", r.status === 200 && typeof r.data.totalOrders === "number", errMsg(r));
@@ -279,12 +340,14 @@ function errMsg(r) {
   const originalTagline = r.data.settings.tagline || "";
   r = await req("PUT", "/api/admin/settings", { token: superToken, body: { tagline: "E2E tagline " + stamp } });
   check("admin settings update", r.status === 200 && r.data.settings.tagline === "E2E tagline " + stamp, errMsg(r));
+  r = await req("PUT", "/api/admin/settings", { token: superToken, body: { upiEnabled: "1", upiId: "test@upi" } });
+  check("online payments forced off", r.status === 200 && r.data.settings.upiEnabled === "0" && r.data.settings.upiId === "", errMsg(r));
   r = await req("PUT", "/api/admin/settings", { token: superToken, body: { tagline: originalTagline } });
   check("admin settings restored", r.status === 200, errMsg(r));
 
   // ---------------- Admin users / logs / inventory / customers ----------------
   const testAdminName = "e2e" + stamp.slice(-6);
-  r = await req("POST", "/api/admin/admins", { token: superToken, body: { username: testAdminName, name: "E2E Manager", password: "test1234", role: "manager" } });
+  r = await req("POST", "/api/admin/admins", { token: superToken, body: { username: testAdminName, name: "E2E Manager", password: "E2eTest1234", role: "manager" } });
   check("admin create account", r.status === 201 && r.data.id, errMsg(r));
   const testAdminId = r.data && r.data.id;
   if (testAdminId) {
@@ -332,8 +395,15 @@ function errMsg(r) {
     check("approved review public", r.status === 200 && (r.data.reviews || []).some(function (x) { return x.title === "E2E review"; }), errMsg(r));
   }
 
+  // ---------------- Customer logout ----------------
+  r = await req("POST", "/api/auth/logout", { token: customerToken, body: {} });
+  check("customer logout", r.status === 200, errMsg(r));
+
+  r = await req("GET", "/api/auth/me", { token: customerToken });
+  check("customer token revoked", r.status === 401, "status " + r.status);
+
   // ---------------- Manager RBAC ----------------
-  r = await req("POST", "/api/admin/login", { body: { username: "aditism", password: "aditi@123" } });
+  r = await req("POST", "/api/admin/login", { body: { username: ADMIN.managerUsername, password: ADMIN.managerPassword } });
   check("manager login", r.status === 200 && r.data.admin.role === "manager", errMsg(r));
   const managerToken = r.data && r.data.token;
 
@@ -358,6 +428,13 @@ function errMsg(r) {
   // ---------------- Cleanup product ----------------
   r = await req("DELETE", "/api/admin/products/" + encodeURIComponent(newProduct.id), { token: superToken });
   check("admin delete product", r.status === 200 && r.data.deleted, errMsg(r));
+
+  // ---------------- Session revocation ----------------
+  r = await req("POST", "/api/admin/logout", { token: superToken, body: {} });
+  check("admin logout", r.status === 200, errMsg(r));
+
+  r = await req("GET", "/api/admin/me", { token: superToken });
+  check("admin token revoked", r.status === 401, "status " + r.status);
 
   finish();
 })().catch(function (err) {

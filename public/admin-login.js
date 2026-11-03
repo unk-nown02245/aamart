@@ -24,6 +24,18 @@
     try { return localStorage.getItem(TOKEN_KEY) || ""; } catch (e) { return ""; }
   }
 
+  function getCookie(name) {
+    var match = document.cookie.match(new RegExp("(?:^|; )" + name + "=([^;]*)"));
+    return match ? decodeURIComponent(match[1]) : "";
+  }
+
+  async function ensureCsrf() {
+    var token = getCookie("csrf");
+    if (token) return token;
+    await fetch("/api/health", { credentials: "same-origin" });
+    return getCookie("csrf");
+  }
+
   async function resumeSession() {
     var token = existingToken();
     if (!token) return;
@@ -54,9 +66,10 @@
     button.disabled = true;
     button.textContent = "Signing in\u2026";
     try {
+      var csrf = await ensureCsrf();
       var res = await fetch("/api/admin/login", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf },
         credentials: "same-origin",
         body: JSON.stringify({ username: username, password: password }),
       });

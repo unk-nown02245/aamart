@@ -4,12 +4,16 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
+const zlib = require("zlib");
 
 const { openDatabase, jsonParse, logActivity } = require("./lib/db");
 const {
   loadSecret,
   hashPassword,
   verifyPassword,
+  validatePassword,
+  generatePassword,
+  hashOtp,
   createTokenManager,
   randomId,
   randomCode,
@@ -17,6 +21,7 @@ const {
   slugify,
   constantTimeEqual,
 } = require("./lib/security");
+const { emailConfigured, otpDebugEnabled, sendMail } = require("./lib/mailer");
 
 const PORT = Number(process.env.PORT) || 4000;
 const ROOT = __dirname;
@@ -31,8 +36,13 @@ const db = openDatabase(DATA_DIR);
 
 const STATUS_FLOW = ["Ordered", "Packed", "Shipped", "Out for Delivery", "Delivered"];
 const PAYMENT_METHODS = { COD: "codEnabled", UPI: "upiEnabled", Card: "cardEnabled", "Net Banking": "netbankingEnabled", Wallet: "walletEnabled" };
+const ONLINE_PAYMENTS_ENABLED = process.env.AAMART_ONLINE_PAYMENTS === "1";
+const TRUST_PROXY = process.env.AAMART_TRUST_PROXY === "1";
+const OTP_TTL_MS = 5 * 60 * 1000;
+const OTP_RESET_TTL_MS = 10 * 60 * 1000;
 const otpStore = new Map();
 const lastOtpSent = new Map();
+const DUMMY_HASH = hashPassword(generatePassword(24));
 
 // ---------------------------------------------------------------------------
 // Utilities
@@ -120,8 +130,25 @@ const SECURITY_HEADERS = {
   "X-Content-Type-Options": "nosniff",
   "X-Frame-Options": "DENY",
   "Referrer-Policy": "no-referrer",
-  "Permissions-Policy": "geolocation=(), microphone=(), camera=()",
-  "X-XSS-Protection": "1; mode=block",
+  "Permissions-Policy": "geolocation=(), microphone=(), camera=(), payment=()",
+  "X-XSS-Protection": "0",
+  "Cross-Origin-Opener-Policy": "same-origin",
+  "Cross-Origin-Resource-Policy": "same-origin",
+  "X-Permitted-Cross-Domain-Policies": "none",
+  "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+  "Content-Security-Policy": [
+    "default-src 'self'",
+    "base-uri 'self'",
+    "object-src 'none'",
+    "frame-ancestors 'none'",
+    "form-action 'self'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: https:",
+    "font-src 'self'",
+    "connect-src 'self'",
+    "manifest-src 'self'",
+  ].join("; "),
 };
 
 function send(res, status, body, headers) {
@@ -178,26 +205,49 @@ function serveFile(res, baseDir, relPath, options) {
   if (resolved !== baseDir && !resolved.startsWith(baseDir + path.sep)) return fail(res, 403, "Forbidden");
   fs.stat(resolved, (err, stat) => {
     if (err || !stat.isFile()) {
-      if (opts.fallback) return serveFile(res, baseDir, opts.fallback, { ...opts, fallback: null });
+      if (opts.fallback) return serveFile(res, baseDir, opts.fallback, { ...opts, fallback: null, status: 404 });
       return fail(res, 404, "Not found");
     }
     const ext = path.extname(resolved).toLowerCase();
-    const noCache = [".html", ".css", ".js"].includes(ext);
-    res.writeHead(200, {
+    const isHtml = ext === ".html";
+    const cache = isHtml
+      ? { "Cache-Control": "no-store, no-cache, must-revalidate", Pragma: "no-cache", Expires: "0" }
+      : [".css", ".js"].includes(ext)
+        ? { "Cache-Control": "public, max-age=300, must-revalidate" }
+        : { "Cache-Control": "public, max-age=86400" };
+    const compressible = [".html", ".css", ".js", ".json", ".svg", ".txt", ".xml", ".webmanifest"].includes(ext);
+    const accept = String((res.req && res.req.headers && res.req.headers["accept-encoding"]) || "");
+    const useGzip = compressible && /\bgzip\b/i.test(accept) && stat.size > 1024;
+    const headers = {
       ...SECURITY_HEADERS,
       "Content-Type": MIME[ext] || "application/octet-stream",
-      "Content-Length": stat.size,
-      ...(noCache
-        ? { "Cache-Control": "no-store, no-cache, must-revalidate", Pragma: "no-cache", Expires: "0" }
-        : { "Cache-Control": "public, max-age=86400" }),
+      ...cache,
+    };
+    if (useGzip) {
+      headers["Content-Encoding"] = "gzip";
+      headers["Vary"] = "Accept-Encoding";
+    } else {
+      headers["Content-Length"] = stat.size;
+    }
+    res.writeHead(opts.status || 200, headers);
+    const stream = fs.createReadStream(resolved);
+    stream.on("error", () => {
+      if (!res.headersSent) fail(res, 500, "Could not read file");
+      else res.destroy();
     });
-    fs.createReadStream(resolved).pipe(res);
+    if (useGzip) stream.pipe(zlib.createGzip()).pipe(res);
+    else stream.pipe(res);
   });
 }
 
 function clientIp(req) {
-  const fwd = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim();
-  return fwd || (req.socket && req.socket.remoteAddress) || "unknown";
+  if (TRUST_PROXY) {
+    const fwd = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim();
+    if (fwd) return fwd;
+    const real = String(req.headers["x-real-ip"] || "").trim();
+    if (real) return real;
+  }
+  return (req.socket && req.socket.remoteAddress) || "unknown";
 }
 
 const rateBuckets = new Map();
@@ -231,8 +281,8 @@ function requireCustomer(req, res) {
     return null;
   }
   const user = db.prepare("SELECT * FROM users WHERE id = ?").get(payload.id);
-  if (!user) {
-    fail(res, 401, "Account not found");
+  if (!user || Number(payload.tv || 0) !== Number(user.token_version || 0)) {
+    fail(res, 401, "Session expired. Please login again.");
     return null;
   }
   return user;
@@ -245,8 +295,8 @@ function requireAdmin(req, res, roles) {
     return null;
   }
   const admin = db.prepare("SELECT * FROM admins WHERE id = ? AND active = 1").get(payload.id);
-  if (!admin) {
-    fail(res, 401, "Admin account not found or disabled");
+  if (!admin || Number(payload.tv || 0) !== Number(admin.token_version || 0)) {
+    fail(res, 401, "Admin session expired. Please login again.");
     return null;
   }
   if (roles && roles.length && !roles.includes(admin.role)) {
@@ -260,6 +310,21 @@ function sanitizeUser(u) {
   return { id: u.id, name: u.name, email: u.email, phone: u.phone, role: u.role, createdAt: u.created_at };
 }
 
+async function deliverOtp(email, code, reset) {
+  if (otpDebugEnabled()) {
+    console.log("[AAMART][OTP DEBUG] " + (reset ? "Password reset" : "Login") + " OTP for " + email + " -> " + code);
+  }
+  if (!emailConfigured()) return { ok: otpDebugEnabled() };
+  const result = await sendMail({
+    to: email,
+    subject: reset ? "Aamart password reset code" : "Aamart login code",
+    text: (reset ? "Your Aamart password reset code is " : "Your Aamart login code is ") + code +
+      ". It expires in " + (reset ? "10" : "5") + " minutes. If you did not request this, ignore this email.",
+  });
+  if (!result.ok) console.error("[AAMART] OTP email failed for " + email + ": " + result.error);
+  return result;
+}
+
 function publicSettings() {
   const s = settingsObject();
   return {
@@ -271,14 +336,17 @@ function publicSettings() {
     taxPercent: Number(s.taxPercent || 0),
     paymentMethods: {
       COD: s.codEnabled === "1",
-      UPI: s.upiEnabled === "1",
-      Card: s.cardEnabled === "1",
-      "Net Banking": s.netbankingEnabled === "1",
-      Wallet: s.walletEnabled === "1",
+      UPI: ONLINE_PAYMENTS_ENABLED && s.upiEnabled === "1",
+      Card: ONLINE_PAYMENTS_ENABLED && s.cardEnabled === "1",
+      "Net Banking": ONLINE_PAYMENTS_ENABLED && s.netbankingEnabled === "1",
+      Wallet: ONLINE_PAYMENTS_ENABLED && s.walletEnabled === "1",
     },
-    upiId: s.upiId || "",
+    onlinePaymentsEnabled: ONLINE_PAYMENTS_ENABLED,
+    otpLoginEnabled: emailConfigured() || otpDebugEnabled(),
+    upiId: ONLINE_PAYMENTS_ENABLED ? s.upiId || "" : "",
     supportEmail: s.supportEmail || "",
     supportPhone: s.supportPhone || "",
+    address: s.address || "",
   };
 }
 
@@ -292,6 +360,19 @@ function getCategory(id) {
 function productImages(productId) {
   const rows = db.prepare("SELECT url FROM product_images WHERE product_id = ? ORDER BY sort ASC").all(productId);
   return rows.length ? rows.map((r) => r.url) : ["/img/placeholder.svg"];
+}
+
+function resolveVariant(productId, variant) {
+  if (!variant) return null;
+  return db.prepare("SELECT * FROM product_variants WHERE product_id = ? AND value = ? LIMIT 1").get(productId, String(variant));
+}
+
+function variantPrice(product, variantRow) {
+  return variantRow && variantRow.price != null ? Number(variantRow.price) : Number(product.price);
+}
+
+function variantStock(product, variantRow) {
+  return variantRow && variantRow.stock != null ? Number(variantRow.stock) : Number(product.stock);
 }
 
 function serializeProduct(row, adminView) {
@@ -408,7 +489,7 @@ function productList(filters) {
   return { products: rows.map((r) => serializeProduct(r, f.adminView)), total };
 }
 
-function categoryTree() {
+function categoryTree(includeEmpty) {
   const rows = db.prepare("SELECT * FROM categories WHERE active = 1 ORDER BY sort ASC, name ASC").all();
   const counts = {};
   db.prepare("SELECT category_id, COUNT(*) AS c FROM products WHERE status = 'active' GROUP BY category_id").all().forEach((r) => {
@@ -422,7 +503,8 @@ function categoryTree() {
       id: p.id, name: p.name, slug: p.slug, icon: p.icon, count,
       subs: subs.map((s) => ({ id: s.id, name: s.name, slug: s.slug, count: counts[s.id] || 0 })),
     };
-  });
+  }).filter((p) => includeEmpty || p.count > 0)
+    .map((p) => ({ ...p, subs: includeEmpty ? p.subs : p.subs.filter((s) => s.count > 0) }));
 }
 
 // ---------------------------------------------------------------------------
@@ -432,12 +514,39 @@ function findCoupon(code) {
   return db.prepare("SELECT * FROM coupons WHERE UPPER(code) = UPPER(?) AND active = 1").get(String(code || "").trim());
 }
 
-function couponError(coupon, itemTotal) {
+function couponError(coupon, itemTotal, userId) {
   if (!coupon) return "Invalid coupon code";
-  if (coupon.expires_at && new Date(coupon.expires_at).getTime() < Date.now()) return "This coupon has expired";
+  if (coupon.expires_at) {
+    const expiry = new Date(coupon.expires_at).getTime();
+    if (!Number.isFinite(expiry)) return "This coupon has an invalid expiry date";
+    if (expiry < Date.now()) return "This coupon has expired";
+  }
   if (coupon.usage_limit > 0 && coupon.used_count >= coupon.usage_limit) return "This coupon has reached its usage limit";
   if (itemTotal < coupon.min_order) return "Minimum order of \u20B9" + coupon.min_order + " required for this coupon";
+  if (userId && db.prepare("SELECT id FROM orders WHERE user_id = ? AND UPPER(coupon_code) = UPPER(?) AND status != 'Cancelled' LIMIT 1").get(userId, coupon.code)) {
+    return "You have already used this coupon";
+  }
   return null;
+}
+
+function normalizeExpiry(value) {
+  const raw = sanitizeString(value, 40);
+  if (!raw) return "";
+  const parsed = new Date(raw);
+  if (!Number.isFinite(parsed.getTime())) return null;
+  return parsed.toISOString();
+}
+
+function safeUrl(value, max) {
+  const raw = sanitizeString(value, max || 500);
+  if (!raw) return "";
+  if (raw.startsWith("/") && !raw.startsWith("//")) return raw;
+  try {
+    const parsed = new URL(raw);
+    return parsed.protocol === "https:" ? parsed.toString() : null;
+  } catch {
+    return null;
+  }
 }
 
 function computeTotals(itemTotal, coupon) {
@@ -501,6 +610,32 @@ function addHistory(orderId, status, note, by) {
 function addInventory(productId, change, reason, by) {
   db.prepare("INSERT INTO inventory(id, product_id, change, reason, by, at) VALUES (?, ?, ?, ?, ?, ?)")
     .run(randomId("inv"), productId, change, reason || "", by || "", nowIso());
+}
+
+function cancelOrder(row, by, note) {
+  db.exec("BEGIN");
+  try {
+    const items = db.prepare("SELECT * FROM order_items WHERE order_id = ?").all(row.id);
+    for (const it of items) {
+      db.prepare("UPDATE products SET stock = stock + ?, updated_at = ? WHERE id = ?").run(it.qty, nowIso(), it.product_id);
+      if (it.variant) {
+        db.prepare("UPDATE product_variants SET stock = stock + ? WHERE product_id = ? AND value = ? AND stock IS NOT NULL")
+          .run(it.qty, it.product_id, it.variant);
+      }
+      addInventory(it.product_id, it.qty, "Order cancelled " + row.order_no, by);
+    }
+    if (row.coupon_code) {
+      db.prepare("UPDATE coupons SET used_count = MAX(0, used_count - 1) WHERE UPPER(code) = UPPER(?)").run(row.coupon_code);
+    }
+    const nextPayment = row.payment_status === "paid" ? "refund_pending" : "cancelled";
+    db.prepare("UPDATE orders SET status = 'Cancelled', payment_status = ?, updated_at = ? WHERE id = ?").run(nextPayment, nowIso(), row.id);
+    db.prepare("UPDATE payments SET status = ? WHERE order_id = ?").run(nextPayment, row.id);
+    addHistory(row.id, "Cancelled", note || "Order cancelled", by);
+    db.exec("COMMIT");
+  } catch (e) {
+    db.exec("ROLLBACK");
+    throw e;
+  }
 }
 
 function recalcRating(productId) {
@@ -596,13 +731,21 @@ function saveProductImages(productId, images) {
   if (!Array.isArray(images)) return;
   db.prepare("DELETE FROM product_images WHERE product_id = ?").run(productId);
   const ins = db.prepare("INSERT INTO product_images(id, product_id, url, sort) VALUES (?, ?, ?, ?)");
-  images.slice(0, 8).forEach((url, i) => ins.run(randomId("img"), productId, url, i));
+  images.slice(0, 8).forEach((url, i) => {
+    const safe = safeUrl(url, 500);
+    if (safe) ins.run(randomId("img"), productId, safe, i);
+  });
 }
 
 function saveProductVariants(productId, variants) {
   db.prepare("DELETE FROM product_variants WHERE product_id = ?").run(productId);
   const ins = db.prepare("INSERT INTO product_variants(id, product_id, type, value, price, stock) VALUES (?, ?, ?, ?, ?, ?)");
-  (variants || []).slice(0, 30).forEach((v) => ins.run(randomId("var"), productId, v.type, v.value, v.price, v.stock));
+  (variants || []).slice(0, 30).forEach((v) => {
+    const value = sanitizeString(v && v.value, 60);
+    if (!value) return;
+    ins.run(randomId("var"), productId, sanitizeString(v.type, 40) || "Option", value,
+      safeNumber(v.price, 0) || null, v.stock == null ? null : Math.max(0, clampInt(v.stock, 0, 1000000, 0)));
+  });
 }
 
 function normalizeAddress(input) {
@@ -660,11 +803,9 @@ async function handleApi(req, res, pathname, parsed) {
     return json(res, { status: "ok", name: "Aamart", time: nowIso() });
   }
 
-  // CSRF double-submit check for state-changing requests (skip auth entry points)
+  // CSRF double-submit check for every state-changing request.
   const isStateChanging = !["GET", "HEAD", "OPTIONS"].includes(method);
-  const authEntry = seg[1] === "auth" && ["register", "login", "send-otp", "verify-otp", "forgot-password", "reset-password"].includes(seg[2]);
-  const adminLogin = seg[1] === "admin" && seg[2] === "login";
-  if (isStateChanging && !authEntry && !adminLogin) {
+  if (isStateChanging) {
     const cookie = parseCookies(req).csrf;
     const header = req.headers["x-csrf-token"];
     if (!cookie || !header || !constantTimeEqual(cookie, header)) {
@@ -684,14 +825,15 @@ async function handleApi(req, res, pathname, parsed) {
     if (name.length < 2) return fail(res, 400, "Please enter your full name");
     if (!isEmail(email)) return fail(res, 400, "Please enter a valid email address");
     if (!isPhone(phone)) return fail(res, 400, "Please enter a valid 10-digit mobile number");
-    if (password.length < 6) return fail(res, 400, "Password must be at least 6 characters");
+    const passwordError = validatePassword(password);
+    if (passwordError) return fail(res, 400, passwordError);
     if (db.prepare("SELECT id FROM users WHERE email = ?").get(email)) return fail(res, 409, "This email is already registered. Please login.");
     const id = randomId("usr");
     const at = nowIso();
     db.prepare("INSERT INTO users(id, name, email, phone, password_hash, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'customer', ?, ?)")
       .run(id, name, email, phone, hashPassword(password), at, at);
     const user = db.prepare("SELECT * FROM users WHERE id = ?").get(id);
-    const token = tokens.sign({ id, role: "customer", kind: "customer" });
+    const token = tokens.sign({ id, role: "customer", kind: "customer", tv: 0 });
     logActivity(db, { actor: email, role: "customer", action: "register", ip });
     return json(res, { token, user: sanitizeUser(user) }, 201);
   }
@@ -701,11 +843,21 @@ async function handleApi(req, res, pathname, parsed) {
     const body = await readBody(req);
     const email = sanitizeString(body && body.email, 120).toLowerCase();
     const password = String((body && body.password) || "");
+    if (!rateLimit("login-email:" + ip + ":" + email, 8, 15 * 60 * 1000)) return fail(res, 429, "Too many login attempts. Please wait 15 minutes.");
     const user = db.prepare("SELECT * FROM users WHERE email = ?").get(email);
-    if (!user || !verifyPassword(password, user.password_hash)) return fail(res, 401, "Invalid email or password");
-    const token = tokens.sign({ id: user.id, role: "customer", kind: "customer" });
+    const ok = verifyPassword(password, user ? user.password_hash : DUMMY_HASH);
+    if (!user || !ok) return fail(res, 401, "Invalid email or password");
+    const token = tokens.sign({ id: user.id, role: "customer", kind: "customer", tv: Number(user.token_version || 0) });
     logActivity(db, { actor: user.email, role: "customer", action: "login", ip });
     return json(res, { token, user: sanitizeUser(user) });
+  }
+
+  if (seg[1] === "auth" && seg[2] === "logout" && method === "POST") {
+    const payload = getUserFromToken(req);
+    if (payload && payload.kind === "customer") {
+      db.prepare("UPDATE users SET token_version = token_version + 1, updated_at = ? WHERE id = ?").run(nowIso(), payload.id);
+    }
+    return json(res, { loggedOut: true });
   }
 
   if (seg[1] === "auth" && seg[2] === "me" && method === "GET") {
@@ -724,86 +876,103 @@ async function handleApi(req, res, pathname, parsed) {
     if (name.length < 2) return fail(res, 400, "Please enter your full name");
     if (!isPhone(phone)) return fail(res, 400, "Please enter a valid 10-digit mobile number");
     let passwordHash = user.password_hash;
+    let token = null;
     if (body.password) {
-      if (String(body.password).length < 6) return fail(res, 400, "Password must be at least 6 characters");
+      const passwordError = validatePassword(String(body.password));
+      if (passwordError) return fail(res, 400, passwordError);
       if (!verifyPassword(String(body.currentPassword || ""), user.password_hash)) return fail(res, 400, "Current password is incorrect");
       passwordHash = hashPassword(String(body.password));
     }
-    db.prepare("UPDATE users SET name = ?, phone = ?, password_hash = ?, updated_at = ? WHERE id = ?")
-      .run(name, phone, passwordHash, nowIso(), user.id);
+    db.prepare("UPDATE users SET name = ?, phone = ?, password_hash = ?, token_version = token_version + ?, updated_at = ? WHERE id = ?")
+      .run(name, phone, passwordHash, body.password ? 1 : 0, nowIso(), user.id);
+    if (body.password) {
+      const fresh = db.prepare("SELECT * FROM users WHERE id = ?").get(user.id);
+      token = tokens.sign({ id: fresh.id, role: "customer", kind: "customer", tv: Number(fresh.token_version || 0) });
+    }
     logActivity(db, { actor: user.email, role: "customer", action: "profile_update", ip });
-    return json(res, { user: sanitizeUser(db.prepare("SELECT * FROM users WHERE id = ?").get(user.id)) });
+    return json(res, { user: sanitizeUser(db.prepare("SELECT * FROM users WHERE id = ?").get(user.id)), ...(token ? { token } : {}) });
   }
 
   if (seg[1] === "auth" && seg[2] === "send-otp" && method === "POST") {
+    if (!emailConfigured() && !otpDebugEnabled()) return fail(res, 503, "OTP login is not configured. Please use your password.");
     if (!rateLimit("otp:" + ip, 8, 10 * 60 * 1000)) return fail(res, 429, "Too many OTP requests. Try later.");
     const body = await readBody(req);
     const email = sanitizeString(body && body.email, 120).toLowerCase();
     if (!isEmail(email)) return fail(res, 400, "Please enter a valid email address");
-    if (Date.now() - (lastOtpSent.get(email) || 0) < 30 * 1000) return fail(res, 429, "Please wait 30 seconds before requesting a new OTP");
-    lastOtpSent.set(email, Date.now());
-    const code = otp();
-    otpStore.set(email, { code, expires: Date.now() + 5 * 60 * 1000, attempts: 0 });
-    console.log("[AAMART] OTP for " + email + " -> " + code);
-    return json(res, { sent: true, expiresIn: 300, demoOtp: code });
+    if (!rateLimit("otp-email:" + ip + ":" + email, 3, 10 * 60 * 1000)) return fail(res, 429, "Too many OTP requests. Try later.");
+    if (Date.now() - (lastOtpSent.get("login:" + email) || 0) < 30 * 1000) return fail(res, 429, "Please wait 30 seconds before requesting a new OTP");
+    lastOtpSent.set("login:" + email, Date.now());
+    const user = db.prepare("SELECT id FROM users WHERE email = ?").get(email);
+    if (user) {
+      const code = otp();
+      otpStore.set(email, { hash: hashOtp(SECRET, email, code), expires: Date.now() + OTP_TTL_MS, attempts: 0, reset: false });
+      await deliverOtp(email, code, false);
+    }
+    return json(res, { sent: true, expiresIn: Math.floor(OTP_TTL_MS / 1000), message: "If an account exists, an OTP has been sent." });
   }
 
   if (seg[1] === "auth" && seg[2] === "verify-otp" && method === "POST") {
+    if (!rateLimit("verify-otp:" + ip, 15, 10 * 60 * 1000)) return fail(res, 429, "Too many attempts. Try later.");
     const body = await readBody(req);
     const email = sanitizeString(body && body.email, 120).toLowerCase();
+    const code = sanitizeString(body && body.otp, 12);
+    if (!isEmail(email) || !/^\d{6}$/.test(code)) return fail(res, 400, "Invalid OTP");
     const rec = otpStore.get(email);
-    if (!rec) return fail(res, 400, "OTP was not requested or has expired");
+    if (!rec || rec.reset) return fail(res, 400, "OTP was not requested or has expired");
     if (rec.expires < Date.now()) { otpStore.delete(email); return fail(res, 400, "OTP expired. Please resend."); }
     rec.attempts++;
     if (rec.attempts > 5) { otpStore.delete(email); return fail(res, 429, "Too many incorrect attempts. Request a new OTP."); }
-    if (!constantTimeEqual(String(body && body.otp), rec.code)) return fail(res, 400, "Incorrect OTP");
+    if (!constantTimeEqual(hashOtp(SECRET, email, code), rec.hash)) return fail(res, 400, "Incorrect OTP");
     otpStore.delete(email);
-    let user = db.prepare("SELECT * FROM users WHERE email = ?").get(email);
-    if (!user) {
-      const id = randomId("usr");
-      const at = nowIso();
-      const name = sanitizeString(body.name, 80) || email.split("@")[0];
-      db.prepare("INSERT INTO users(id, name, email, phone, password_hash, role, created_at, updated_at) VALUES (?, ?, ?, '', ?, 'customer', ?, ?)")
-        .run(id, name, email, hashPassword(randomCode(24)), at, at);
-      user = db.prepare("SELECT * FROM users WHERE id = ?").get(id);
-    }
-    const token = tokens.sign({ id: user.id, role: "customer", kind: "customer" });
+    const user = db.prepare("SELECT * FROM users WHERE email = ?").get(email);
+    if (!user) return fail(res, 400, "OTP was not requested or has expired");
+    const token = tokens.sign({ id: user.id, role: "customer", kind: "customer", tv: Number(user.token_version || 0) });
+    logActivity(db, { actor: user.email, role: "customer", action: "otp_login", ip });
     return json(res, { token, user: sanitizeUser(user) });
   }
 
   if (seg[1] === "auth" && seg[2] === "forgot-password" && method === "POST") {
+    if (!emailConfigured() && !otpDebugEnabled()) return fail(res, 503, "Password reset is not configured. Please contact support.");
     if (!rateLimit("forgot:" + ip, 8, 10 * 60 * 1000)) return fail(res, 429, "Too many requests. Try later.");
     const body = await readBody(req);
     const email = sanitizeString(body && body.email, 120).toLowerCase();
+    if (!isEmail(email)) return fail(res, 400, "Please enter a valid email address");
+    if (Date.now() - (lastOtpSent.get("reset:" + email) || 0) < 60 * 1000) return fail(res, 429, "Please wait 60 seconds before requesting a new OTP");
+    lastOtpSent.set("reset:" + email, Date.now());
     if (db.prepare("SELECT id FROM users WHERE email = ?").get(email)) {
       const code = otp();
-      otpStore.set(email, { code, expires: Date.now() + 10 * 60 * 1000, attempts: 0, reset: true });
-      console.log("[AAMART] Password reset OTP for " + email + " -> " + code);
+      otpStore.set(email, { hash: hashOtp(SECRET, email, code), expires: Date.now() + OTP_RESET_TTL_MS, attempts: 0, reset: true });
+      await deliverOtp(email, code, true);
     }
     return json(res, { sent: true, message: "If an account exists, a reset OTP has been sent." });
   }
 
   if (seg[1] === "auth" && seg[2] === "reset-password" && method === "POST") {
+    if (!rateLimit("reset-password:" + ip, 15, 10 * 60 * 1000)) return fail(res, 429, "Too many attempts. Try later.");
     const body = await readBody(req);
     const email = sanitizeString(body && body.email, 120).toLowerCase();
+    const code = sanitizeString(body && body.otp, 12);
     const rec = otpStore.get(email);
     if (!rec || !rec.reset) return fail(res, 400, "Reset OTP was not requested or has expired");
     if (rec.expires < Date.now()) { otpStore.delete(email); return fail(res, 400, "OTP expired. Please resend."); }
     rec.attempts++;
     if (rec.attempts > 5) { otpStore.delete(email); return fail(res, 429, "Too many incorrect attempts."); }
-    if (!constantTimeEqual(String(body && body.otp), rec.code)) return fail(res, 400, "Incorrect OTP");
-    if (String(body.password || "").length < 6) return fail(res, 400, "Password must be at least 6 characters");
+    if (!constantTimeEqual(hashOtp(SECRET, email, code), rec.hash)) return fail(res, 400, "Incorrect OTP");
+    const passwordError = validatePassword(String(body.password || ""));
+    if (passwordError) return fail(res, 400, passwordError);
     otpStore.delete(email);
     const user = db.prepare("SELECT id FROM users WHERE email = ?").get(email);
     if (!user) return fail(res, 404, "Account not found");
-    db.prepare("UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?").run(hashPassword(String(body.password)), nowIso(), user.id);
+    db.prepare("UPDATE users SET password_hash = ?, token_version = token_version + 1, updated_at = ? WHERE id = ?")
+      .run(hashPassword(String(body.password)), nowIso(), user.id);
+    logActivity(db, { actor: email, role: "customer", action: "password_reset", ip });
     return json(res, { reset: true });
   }
 
   // ---------------- Public catalog ----------------
   if (seg[1] === "settings" && method === "GET") return json(res, publicSettings());
 
-  if (seg[1] === "categories" && method === "GET") return json(res, { categories: categoryTree() });
+  if (seg[1] === "categories" && method === "GET") return json(res, { categories: categoryTree(false) });
 
   if (seg[1] === "brands" && method === "GET") {
     return json(res, { brands: db.prepare("SELECT id, name, slug FROM brands WHERE active = 1 ORDER BY name").all() });
@@ -848,7 +1017,9 @@ async function handleApi(req, res, pathname, parsed) {
     const body = await readBody(req);
     const coupon = findCoupon(body && body.code);
     const itemTotal = safeNumber(body && body.itemTotal, 0);
-    const err = couponError(coupon, itemTotal);
+    const payload = getUserFromToken(req);
+    const userId = payload && payload.kind === "customer" ? payload.id : null;
+    const err = couponError(coupon, itemTotal, userId);
     if (err) return fail(res, 400, err);
     return json(res, { valid: true, coupon: { code: coupon.code, type: coupon.type, value: coupon.value, maxDiscount: coupon.max_discount }, ...computeTotals(itemTotal, coupon) });
   }
@@ -865,10 +1036,13 @@ async function handleApi(req, res, pathname, parsed) {
       for (const r of rows) {
         const p = db.prepare("SELECT * FROM products WHERE id = ?").get(r.product_id);
         if (!p) continue;
+        const v = resolveVariant(p.id, r.variant);
+        const price = variantPrice(p, v);
+        const stock = variantStock(p, v);
         const entry = {
           id: r.id, productId: p.id, qty: r.qty, variant: r.variant, saved: !!r.saved,
-          name: p.title, price: p.price, mrp: p.mrp, image: productImages(p.id)[0],
-          stock: p.stock, status: p.status, lineTotal: money(p.price * r.qty),
+          name: p.title, price, mrp: p.mrp, image: productImages(p.id)[0],
+          stock, status: p.status, lineTotal: money(price * r.qty),
         };
         (r.saved ? saved : items).push(entry);
       }
@@ -882,13 +1056,16 @@ async function handleApi(req, res, pathname, parsed) {
       const qty = clampInt(body && body.qty, 1, 20, 1);
       const p = db.prepare("SELECT * FROM products WHERE id = ? AND status = 'active'").get(productId);
       if (!p) return fail(res, 404, "Product not available");
-      if (p.stock <= 0) return fail(res, 400, "This product is out of stock");
+      const v = resolveVariant(productId, variant);
+      if (variant && !v) return fail(res, 400, "Selected variant is not available");
+      const stock = variantStock(p, v);
+      if (stock <= 0) return fail(res, 400, "This product is out of stock");
       const existing = db.prepare("SELECT * FROM cart_items WHERE user_id = ? AND product_id = ? AND variant = ? AND saved = 0").get(user.id, productId, variant);
       if (existing) {
-        db.prepare("UPDATE cart_items SET qty = ? WHERE id = ?").run(Math.min(20, existing.qty + qty, p.stock), existing.id);
+        db.prepare("UPDATE cart_items SET qty = ? WHERE id = ?").run(Math.min(20, existing.qty + qty, stock), existing.id);
       } else {
         db.prepare("INSERT INTO cart_items(id, user_id, product_id, variant, qty, saved, created_at) VALUES (?, ?, ?, ?, ?, 0, ?)")
-          .run(randomId("crt"), user.id, productId, variant, Math.min(qty, p.stock), nowIso());
+          .run(randomId("crt"), user.id, productId, variant, Math.min(qty, stock), nowIso());
       }
       return json(res, { added: true });
     }
@@ -903,8 +1080,10 @@ async function handleApi(req, res, pathname, parsed) {
       const item = db.prepare("SELECT * FROM cart_items WHERE id = ? AND user_id = ?").get(seg[2], user.id);
       if (!item) return fail(res, 404, "Cart item not found");
       if (body.qty != null) {
-        const p = db.prepare("SELECT stock FROM products WHERE id = ?").get(item.product_id);
-        const max = Math.max(1, Math.min(20, p ? p.stock : 20));
+        const p = db.prepare("SELECT * FROM products WHERE id = ?").get(item.product_id);
+        const v = resolveVariant(item.product_id, item.variant);
+        const stock = p ? variantStock(p, v) : 0;
+        const max = Math.max(1, Math.min(20, stock));
         db.prepare("UPDATE cart_items SET qty = ? WHERE id = ?").run(clampInt(body.qty, 1, max, 1), item.id);
       }
       if (body.saved != null) db.prepare("UPDATE cart_items SET saved = ? WHERE id = ?").run(body.saved ? 1 : 0, item.id);
@@ -998,6 +1177,7 @@ async function handleApi(req, res, pathname, parsed) {
     if (a.error) return fail(res, 400, a.error);
     const method = sanitizeString(body.paymentMethod, 30) || "COD";
     if (!PAYMENT_METHODS[method]) return fail(res, 400, "Invalid payment method");
+    if (method !== "COD") return fail(res, 400, "Online payments are not available yet. Please choose Cash on Delivery.");
     if (setting(PAYMENT_METHODS[method], "1") !== "1") return fail(res, 400, method + " is currently unavailable");
 
     const cartRows = db.prepare("SELECT * FROM cart_items WHERE user_id = ? AND saved = 0").all(user.id);
@@ -1008,15 +1188,19 @@ async function handleApi(req, res, pathname, parsed) {
     for (const r of cartRows) {
       const p = db.prepare("SELECT * FROM products WHERE id = ?").get(r.product_id);
       if (!p || p.status !== "active") return fail(res, 400, "A product in your cart is no longer available");
-      if (p.stock < r.qty) return fail(res, 400, "Only " + p.stock + " left of " + p.title);
-      itemTotal += p.price * r.qty;
-      items.push({ product: p, qty: r.qty, variant: r.variant });
+      const v = resolveVariant(p.id, r.variant);
+      if (r.variant && !v) return fail(res, 400, "A selected variant is no longer available. Please update your cart.");
+      const price = variantPrice(p, v);
+      const available = variantStock(p, v);
+      if (available < r.qty) return fail(res, 400, "Only " + available + " left of " + p.title);
+      itemTotal += price * r.qty;
+      items.push({ product: p, qty: r.qty, variant: r.variant, variantRow: v, price });
     }
 
     let coupon = null;
     if (body.couponCode) {
       coupon = findCoupon(body.couponCode);
-      const err = couponError(coupon, itemTotal);
+      const err = couponError(coupon, itemTotal, user.id);
       if (err) return fail(res, 400, err);
     }
     const totals = computeTotals(itemTotal, coupon);
@@ -1029,17 +1213,20 @@ async function handleApi(req, res, pathname, parsed) {
       db.prepare(`INSERT INTO orders(id, order_no, user_id, customer_name, customer_phone, customer_email, item_total, discount, delivery_charge, tax, payable, coupon_code, address_json, payment_method, payment_status, status, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Ordered', ?, ?)`)
         .run(id, orderNo, user.id, a.name, a.phone, user.email, totals.itemTotal, totals.discount, totals.deliveryCharge, totals.tax, totals.payable,
-          coupon ? coupon.code : "", JSON.stringify(a), method, method === "COD" ? "pending" : "paid", at, at);
+          coupon ? coupon.code : "", JSON.stringify(a), method, "pending", at, at);
 
       for (const it of items) {
         db.prepare("INSERT INTO order_items(id, order_id, product_id, name, price, qty, image, variant) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-          .run(randomId("oit"), id, it.product.id, it.product.title, it.product.price, it.qty, productImages(it.product.id)[0], it.variant);
+          .run(randomId("oit"), id, it.product.id, it.product.title, it.price, it.qty, productImages(it.product.id)[0], it.variant);
         db.prepare("UPDATE products SET stock = stock - ?, updated_at = ? WHERE id = ?").run(it.qty, at, it.product.id);
+        if (it.variantRow && it.variantRow.stock != null) {
+          db.prepare("UPDATE product_variants SET stock = MAX(0, stock - ?) WHERE id = ?").run(it.qty, it.variantRow.id);
+        }
         addInventory(it.product.id, -it.qty, "Order " + orderNo, user.email);
       }
 
       db.prepare("INSERT INTO payments(id, order_id, method, amount, status, txn_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-        .run(randomId("pay"), id, method, totals.payable, method === "COD" ? "pending" : "paid", method === "COD" ? "" : "SIM" + randomCode(10), at);
+        .run(randomId("pay"), id, method, totals.payable, "pending", "", at);
 
       if (coupon) db.prepare("UPDATE coupons SET used_count = used_count + 1 WHERE id = ?").run(coupon.id);
       db.prepare("DELETE FROM cart_items WHERE user_id = ? AND saved = 0").run(user.id);
@@ -1077,13 +1264,7 @@ async function handleApi(req, res, pathname, parsed) {
     if (!row) return fail(res, 404, "Order not found");
     if (["Delivered", "Cancelled"].includes(row.status)) return fail(res, 400, "This order cannot be cancelled");
     if (["Shipped", "Out for Delivery"].includes(row.status)) return fail(res, 400, "Order has already shipped and cannot be cancelled");
-    db.prepare("UPDATE orders SET status = 'Cancelled', updated_at = ? WHERE id = ?").run(nowIso(), row.id);
-    const items = db.prepare("SELECT * FROM order_items WHERE order_id = ?").all(row.id);
-    for (const it of items) {
-      db.prepare("UPDATE products SET stock = stock + ?, updated_at = ? WHERE id = ?").run(it.qty, nowIso(), it.product_id);
-      addInventory(it.product_id, it.qty, "Order cancelled " + row.order_no, user.email);
-    }
-    addHistory(row.id, "Cancelled", "Cancelled by customer", user.email);
+    cancelOrder(row, user.email, "Cancelled by customer");
     logActivity(db, { actor: user.email, role: "customer", action: "order_cancel", meta: { orderNo: row.order_no }, ip });
     return json(res, serializeOrder(db.prepare("SELECT * FROM orders WHERE id = ?").get(row.id)));
   }
@@ -1111,14 +1292,41 @@ async function handleApi(req, res, pathname, parsed) {
     const body = await readBody(req);
     const username = sanitizeString(body && body.username, 60).toLowerCase();
     const password = String((body && body.password) || "");
+    if (!rateLimit("adminlogin-user:" + ip + ":" + username, 5, 15 * 60 * 1000)) return fail(res, 429, "Too many login attempts. Please wait 15 minutes.");
     const admin = db.prepare("SELECT * FROM admins WHERE LOWER(username) = ?").get(username);
-    if (!admin || !admin.active || !verifyPassword(password, admin.password_hash)) {
+    const ok = verifyPassword(password, admin ? admin.password_hash : DUMMY_HASH);
+    if (!admin || !admin.active || !ok) {
       logActivity(db, { actor: username, role: "admin", action: "login_failed", ip });
       return fail(res, 401, "Invalid username or password");
     }
-    const token = tokens.sign({ id: admin.id, role: admin.role, kind: "admin", username: admin.username });
+    const token = tokens.sign({ id: admin.id, role: admin.role, kind: "admin", username: admin.username, tv: Number(admin.token_version || 0) });
     logActivity(db, { actor: admin.username, role: admin.role, action: "login", ip });
     return json(res, { token, admin: { id: admin.id, username: admin.username, name: admin.name, role: admin.role } });
+  }
+
+  if (seg[1] === "admin" && seg[2] === "logout" && method === "POST") {
+    const payload = getUserFromToken(req);
+    if (payload && payload.kind === "admin") {
+      db.prepare("UPDATE admins SET token_version = token_version + 1 WHERE id = ?").run(payload.id);
+    }
+    return json(res, { loggedOut: true });
+  }
+
+  if (seg[1] === "admin" && seg[2] === "password" && method === "POST") {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    const body = await readBody(req);
+    const current = String((body && body.currentPassword) || "");
+    const next = String((body && body.newPassword) || "");
+    if (!verifyPassword(current, admin.password_hash)) return fail(res, 400, "Current password is incorrect");
+    const passwordError = validatePassword(next);
+    if (passwordError) return fail(res, 400, passwordError);
+    db.prepare("UPDATE admins SET password_hash = ?, token_version = token_version + 1 WHERE id = ?")
+      .run(hashPassword(next), admin.id);
+    const fresh = db.prepare("SELECT * FROM admins WHERE id = ?").get(admin.id);
+    const token = tokens.sign({ id: fresh.id, role: fresh.role, kind: "admin", username: fresh.username, tv: Number(fresh.token_version || 0) });
+    logActivity(db, { actor: admin.username, role: admin.role, action: "admin_password_change", ip });
+    return json(res, { changed: true, token, admin: { id: fresh.id, username: fresh.username, name: fresh.name, role: fresh.role } });
   }
 
   if (seg[1] === "admin" && seg[2] === "me" && method === "GET") {
@@ -1266,7 +1474,7 @@ async function handleApi(req, res, pathname, parsed) {
     const admin = requireAdmin(req, res, ["super"]);
     if (!admin) return;
     if (seg.length === 3 && method === "GET") {
-      return json(res, { categories: categoryTree(), flat: db.prepare("SELECT * FROM categories ORDER BY sort ASC, name ASC").all() });
+      return json(res, { categories: categoryTree(true), flat: db.prepare("SELECT * FROM categories ORDER BY sort ASC, name ASC").all() });
     }
     if (seg.length === 3 && method === "POST") {
       const body = await readBody(req);
@@ -1319,17 +1527,23 @@ async function handleApi(req, res, pathname, parsed) {
       const body = await readBody(req);
       const title = sanitizeString(body && body.title, 100);
       if (!title) return fail(res, 400, "Banner title is required");
+      const image = safeUrl(body.image, 300);
+      const link = safeUrl(body.link, 200);
+      if (image === null || link === null) return fail(res, 400, "Banner image/link must be a relative path or HTTPS URL");
       const id = randomId("ban");
       db.prepare("INSERT INTO banners(id, title, subtitle, image, link, active, sort) VALUES (?, ?, ?, ?, ?, ?, ?)")
-        .run(id, title, sanitizeString(body.subtitle, 160), sanitizeString(body.image, 300), sanitizeString(body.link, 200), body.active === false ? 0 : 1, safeNumber(body.sort, 0));
+        .run(id, title, sanitizeString(body.subtitle, 160), image, link, body.active === false ? 0 : 1, safeNumber(body.sort, 0));
       return json(res, db.prepare("SELECT * FROM banners WHERE id = ?").get(id), 201);
     }
     if (seg.length === 4 && method === "PUT") {
       const body = await readBody(req);
       const b = db.prepare("SELECT * FROM banners WHERE id = ?").get(seg[3]);
       if (!b) return fail(res, 404, "Banner not found");
+      const image = body.image != null ? safeUrl(body.image, 300) : b.image;
+      const link = body.link != null ? safeUrl(body.link, 200) : b.link;
+      if (image === null || link === null) return fail(res, 400, "Banner image/link must be a relative path or HTTPS URL");
       db.prepare("UPDATE banners SET title = ?, subtitle = ?, image = ?, link = ?, active = ?, sort = ? WHERE id = ?")
-        .run(body.title != null ? sanitizeString(body.title, 100) : b.title, body.subtitle != null ? sanitizeString(body.subtitle, 160) : b.subtitle, body.image != null ? sanitizeString(body.image, 300) : b.image, body.link != null ? sanitizeString(body.link, 200) : b.link, body.active != null ? (body.active ? 1 : 0) : b.active, body.sort != null ? safeNumber(body.sort, b.sort) : b.sort, b.id);
+        .run(body.title != null ? sanitizeString(body.title, 100) : b.title, body.subtitle != null ? sanitizeString(body.subtitle, 160) : b.subtitle, image, link, body.active != null ? (body.active ? 1 : 0) : b.active, body.sort != null ? safeNumber(body.sort, b.sort) : b.sort, b.id);
       return json(res, db.prepare("SELECT * FROM banners WHERE id = ?").get(b.id));
     }
     if (seg.length === 4 && method === "DELETE") {
@@ -1350,17 +1564,21 @@ async function handleApi(req, res, pathname, parsed) {
       if (db.prepare("SELECT id FROM coupons WHERE UPPER(code) = ?").get(code)) return fail(res, 409, "Coupon code already exists");
       const value = safeNumber(body.value, 0);
       if (value <= 0) return fail(res, 400, "Coupon value must be greater than 0");
+      const expiresAt = normalizeExpiry(body.expiresAt);
+      if (expiresAt === null) return fail(res, 400, "Invalid coupon expiry date");
       const id = randomId("cpn");
       db.prepare("INSERT INTO coupons(id, code, type, value, min_order, max_discount, expires_at, usage_limit, used_count, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 1)")
-        .run(id, code, body.type === "flat" ? "flat" : "percent", value, safeNumber(body.minOrder, 0), safeNumber(body.maxDiscount, 0), sanitizeString(body.expiresAt, 40), clampInt(body.usageLimit, 0, 1000000, 0));
+        .run(id, code, body.type === "flat" ? "flat" : "percent", value, safeNumber(body.minOrder, 0), safeNumber(body.maxDiscount, 0), expiresAt, clampInt(body.usageLimit, 0, 1000000, 0));
       return json(res, db.prepare("SELECT * FROM coupons WHERE id = ?").get(id), 201);
     }
     if (seg.length === 4 && method === "PUT") {
       const body = await readBody(req);
       const c = db.prepare("SELECT * FROM coupons WHERE id = ?").get(seg[3]);
       if (!c) return fail(res, 404, "Coupon not found");
+      const expiresAt = body.expiresAt != null ? normalizeExpiry(body.expiresAt) : c.expires_at;
+      if (expiresAt === null) return fail(res, 400, "Invalid coupon expiry date");
       db.prepare("UPDATE coupons SET value = ?, min_order = ?, max_discount = ?, expires_at = ?, usage_limit = ?, active = ? WHERE id = ?")
-        .run(body.value != null ? safeNumber(body.value, c.value) : c.value, body.minOrder != null ? safeNumber(body.minOrder, c.min_order) : c.min_order, body.maxDiscount != null ? safeNumber(body.maxDiscount, c.max_discount) : c.max_discount, body.expiresAt != null ? sanitizeString(body.expiresAt, 40) : c.expires_at, body.usageLimit != null ? clampInt(body.usageLimit, 0, 1000000, c.usage_limit) : c.usage_limit, body.active != null ? (body.active ? 1 : 0) : c.active, c.id);
+        .run(body.value != null ? safeNumber(body.value, c.value) : c.value, body.minOrder != null ? safeNumber(body.minOrder, c.min_order) : c.min_order, body.maxDiscount != null ? safeNumber(body.maxDiscount, c.max_discount) : c.max_discount, expiresAt, body.usageLimit != null ? clampInt(body.usageLimit, 0, 1000000, c.usage_limit) : c.usage_limit, body.active != null ? (body.active ? 1 : 0) : c.active, c.id);
       return json(res, db.prepare("SELECT * FROM coupons WHERE id = ?").get(c.id));
     }
     if (seg.length === 4 && method === "DELETE") {
@@ -1389,14 +1607,18 @@ async function handleApi(req, res, pathname, parsed) {
       if (!STATUS_FLOW.includes(status) && status !== "Cancelled") return fail(res, 400, "Invalid order status");
       if (row.status === "Delivered" || row.status === "Cancelled") return fail(res, 400, "This order is already " + row.status);
       if (status === "Cancelled") {
-        const items = db.prepare("SELECT * FROM order_items WHERE order_id = ?").all(row.id);
-        for (const it of items) {
-          db.prepare("UPDATE products SET stock = stock + ?, updated_at = ? WHERE id = ?").run(it.qty, nowIso(), it.product_id);
-          addInventory(it.product_id, it.qty, "Order cancelled " + row.order_no, admin.username);
+        cancelOrder(row, admin.username, sanitizeString(body.note, 200) || "Cancelled by admin");
+      } else {
+        const currentIndex = STATUS_FLOW.indexOf(row.status);
+        const nextIndex = STATUS_FLOW.indexOf(status);
+        if (nextIndex !== currentIndex + 1) return fail(res, 400, "Orders can only move to the next status");
+        db.prepare("UPDATE orders SET status = ?, payment_status = ?, updated_at = ? WHERE id = ?")
+          .run(status, status === "Delivered" && row.payment_method === "COD" ? "paid" : row.payment_status, nowIso(), row.id);
+        if (status === "Delivered" && row.payment_method === "COD") {
+          db.prepare("UPDATE payments SET status = 'paid' WHERE order_id = ?").run(row.id);
         }
+        addHistory(row.id, status, sanitizeString(body.note, 200), admin.username);
       }
-      db.prepare("UPDATE orders SET status = ?, updated_at = ? WHERE id = ?").run(status, nowIso(), row.id);
-      addHistory(row.id, status, sanitizeString(body.note, 200), admin.username);
       logActivity(db, { actor: admin.username, role: admin.role, action: "order_status", meta: { orderNo: row.order_no, status }, ip });
       return json(res, serializeOrder(db.prepare("SELECT * FROM orders WHERE id = ?").get(row.id), true));
     }
@@ -1406,10 +1628,14 @@ async function handleApi(req, res, pathname, parsed) {
   if (seg[1] === "admin" && seg[2] === "customers" && method === "GET") {
     const admin = requireAdmin(req, res, ["super"]);
     if (!admin) return;
-    const customers = db.prepare("SELECT id, name, email, phone, created_at FROM users ORDER BY created_at DESC").all().map((u) => {
-      const agg = db.prepare("SELECT COUNT(*) AS orders, COALESCE(SUM(payable),0) AS spent FROM orders WHERE user_id = ? AND status != 'Cancelled'").get(u.id);
-      return { ...u, orders: agg.orders, spent: agg.spent };
-    });
+    const customers = db.prepare(`
+      SELECT u.id, u.name, u.email, u.phone, u.created_at,
+             COUNT(o.id) AS orders, COALESCE(SUM(CASE WHEN o.status != 'Cancelled' THEN o.payable ELSE 0 END), 0) AS spent
+      FROM users u
+      LEFT JOIN orders o ON o.user_id = u.id
+      GROUP BY u.id
+      ORDER BY u.created_at DESC
+    `).all();
     return json(res, { customers });
   }
 
@@ -1445,12 +1671,19 @@ async function handleApi(req, res, pathname, parsed) {
   if (seg[1] === "admin" && seg[2] === "settings") {
     const admin = requireAdmin(req, res, ["super"]);
     if (!admin) return;
-    if (method === "GET") return json(res, { settings: settingsObject() });
+    if (method === "GET") return json(res, { settings: settingsObject(), onlinePaymentsEnabled: ONLINE_PAYMENTS_ENABLED });
     if (method === "PUT") {
       const body = await readBody(req);
       const allowed = ["siteName", "tagline", "currency", "deliveryCharge", "freeDeliveryAbove", "taxPercent", "codEnabled", "upiEnabled", "cardEnabled", "netbankingEnabled", "walletEnabled", "upiId", "supportEmail", "supportPhone", "address"];
       const upsert = db.prepare("INSERT INTO settings(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value");
-      for (const key of allowed) if (body[key] !== undefined) upsert.run(key, String(body[key]));
+      const onlineKeys = ["upiEnabled", "cardEnabled", "netbankingEnabled", "walletEnabled"];
+      for (const key of allowed) {
+        if (body[key] === undefined) continue;
+        let value = String(body[key]);
+        if (!ONLINE_PAYMENTS_ENABLED && onlineKeys.includes(key)) value = "0";
+        if (!ONLINE_PAYMENTS_ENABLED && key === "upiId") value = "";
+        upsert.run(key, value);
+      }
       logActivity(db, { actor: admin.username, role: admin.role, action: "settings_update", ip });
       return json(res, { settings: settingsObject() });
     }
@@ -1469,7 +1702,8 @@ async function handleApi(req, res, pathname, parsed) {
       const password = String((body && body.password) || "");
       const role = body.role === "super" ? "super" : "manager";
       if (!/^[a-z0-9_.-]{3,40}$/.test(username)) return fail(res, 400, "Username must be 3-40 letters/numbers");
-      if (password.length < 6) return fail(res, 400, "Password must be at least 6 characters");
+      const passwordError = validatePassword(password);
+      if (passwordError) return fail(res, 400, passwordError);
       if (db.prepare("SELECT id FROM admins WHERE LOWER(username) = ?").get(username)) return fail(res, 409, "Username already exists");
       const id = randomId("adm");
       db.prepare("INSERT INTO admins(id, username, name, password_hash, role, active, created_at) VALUES (?, ?, ?, ?, ?, 1, ?)")
@@ -1483,10 +1717,13 @@ async function handleApi(req, res, pathname, parsed) {
       if (!target) return fail(res, 404, "Admin not found");
       if (target.role === "super" && target.id !== admin.id) return fail(res, 403, "Cannot modify another Super Admin");
       if (target.id === admin.id && body.active === false) return fail(res, 400, "You cannot disable your own account");
-      if (body.password && String(body.password).length < 6) return fail(res, 400, "Password must be at least 6 characters");
+      if (body.password) {
+        const passwordError = validatePassword(String(body.password));
+        if (passwordError) return fail(res, 400, passwordError);
+      }
       const passwordHash = body.password ? hashPassword(String(body.password)) : target.password_hash;
-      db.prepare("UPDATE admins SET name = ?, password_hash = ?, active = ? WHERE id = ?")
-        .run(body.name != null ? sanitizeString(body.name, 80) : target.name, passwordHash, body.active != null ? (body.active ? 1 : 0) : target.active, target.id);
+      db.prepare("UPDATE admins SET name = ?, password_hash = ?, active = ?, token_version = token_version + ? WHERE id = ?")
+        .run(body.name != null ? sanitizeString(body.name, 80) : target.name, passwordHash, body.active != null ? (body.active ? 1 : 0) : target.active, (body.password || body.active != null) ? 1 : 0, target.id);
       logActivity(db, { actor: admin.username, role: admin.role, action: "admin_update", meta: { username: target.username }, ip });
       return json(res, db.prepare("SELECT id, username, name, role, active, created_at FROM admins WHERE id = ?").get(target.id));
     }
@@ -1555,7 +1792,13 @@ const server = http.createServer(async (req, res) => {
       return serveFile(res, PUBLIC_DIR, "/admin.html");
     }
 
-    return serveFile(res, PUBLIC_DIR, pathname, { fallback: "/index.html" });
+    if (pathname === "/" || pathname === "/index.html") {
+      return serveFile(res, PUBLIC_DIR, "/index.html");
+    }
+    if (!path.extname(pathname)) {
+      return serveFile(res, PUBLIC_DIR, pathname, { fallback: "/404.html" });
+    }
+    return serveFile(res, PUBLIC_DIR, pathname);
   } catch (e) {
     console.error("[AAMART] Request error:", e);
     return fail(res, 500, "Server error");
@@ -1573,9 +1816,8 @@ server.listen(PORT, () => {
   console.log("  Manager Admin   : http://localhost:" + PORT + "/admin/aditism");
   console.log("  Product Control : http://localhost:" + PORT + "/admin/products");
   console.log("  " + line);
-  console.log("  Super Admin     : amirhamza / akib@123");
-  console.log("  Manager Admin   : aditism / aditi@123");
-  console.log("  Test Customer   : test@aamart.in / test@123");
+  console.log("  Admin credentials are managed securely on first run.");
+  console.log("  See data/ADMIN-CREDENTIALS.txt or set AAMART_SUPER_PASSWORD.");
   console.log("  " + line);
   console.log("  Database        : data/aamart.db (SQLite)");
   console.log("");
