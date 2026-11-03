@@ -22,28 +22,25 @@ The SQLite database is created and seeded automatically at `data/aamart.db` on f
 run. To reset all data, stop the server and delete `data/aamart.db` (and optionally
 `uploads/`), then start it again.
 
-## First-run admin credentials
+## Admin credentials
 
-Default passwords are **not** committed or printed in the UI. On first run Aamart
-creates a super admin and manager with random strong passwords, writes them to
-`data/ADMIN-CREDENTIALS.txt` (permission `0600`), and prints them once in the server
-console. Move/delete that file after saving the credentials securely.
+| Role | Username | Password |
+| --- | --- | --- |
+| Super Admin | `amirhamza` | `akib@123` |
+| Manager | `aditism` | `aditi@123` |
 
-To choose the passwords yourself, set them before the first run:
-
-```bash
-AAMART_SUPER_PASSWORD='YourStrongPassword123' AAMART_MANAGER_PASSWORD='AnotherStrongPassword123' node server.js
-```
-
-Known old defaults (`akib@123`, `aditi@123`) are automatically rotated on startup.
+These are the requested project defaults. Change them from **Admin > Change password**
+before using the store publicly. `AAMART_SUPER_PASSWORD` and
+`AAMART_MANAGER_PASSWORD` override them when the credentials are first synced. The
+current values are also written to `data/ADMIN-CREDENTIALS.txt` (gitignored).
 
 ## Environment variables
 
 | Variable | Purpose |
 | --- | --- |
 | `PORT` | HTTP port (default `4000`) |
-| `AAMART_SUPER_PASSWORD` | Initial super-admin password |
-| `AAMART_MANAGER_PASSWORD` | Initial manager password |
+| `AAMART_SUPER_PASSWORD` | Override the super-admin password on first credential sync |
+| `AAMART_MANAGER_PASSWORD` | Override the manager password on first credential sync |
 | `AAMART_TOKEN_TTL_MS` | Session lifetime in ms (default 8 hours, minimum 15 minutes) |
 | `AAMART_TRUST_PROXY=1` | Trust `X-Forwarded-For` / `X-Real-IP` (set only behind a trusted proxy) |
 | `AAMART_ONLINE_PAYMENTS=1` | Allow online payment methods (gateway integration still required) |

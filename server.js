@@ -1818,8 +1818,8 @@ server.listen(PORT, () => {
   console.log("  Manager Admin   : http://localhost:" + PORT + "/admin/aditism");
   console.log("  Product Control : http://localhost:" + PORT + "/admin/products");
   console.log("  " + line);
-  console.log("  Admin credentials are managed securely on first run.");
-  console.log("  See data/ADMIN-CREDENTIALS.txt or set AAMART_SUPER_PASSWORD.");
+  console.log("  Admin credentials: see data/ADMIN-CREDENTIALS.txt");
+  console.log("  Override with AAMART_SUPER_PASSWORD / AAMART_MANAGER_PASSWORD.");
   console.log("  " + line);
   console.log("  Database        : data/aamart.db (SQLite)");
   console.log("");
