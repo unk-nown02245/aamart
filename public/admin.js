@@ -880,7 +880,7 @@
       field("Image URL", '<input name="image" value="' + imageSrc + '" maxlength="500" placeholder="/uploads/... or https://...">', true) +
       '<div class="full upload-box">Upload category image (JPG, PNG, WEBP or GIF \u00B7 max 4 MB)' +
       '<input type="file" accept="image/png,image/jpeg,image/gif,image/webp" data-action="upload-category-image"></div>' +
-      '<div class="full category-image-preview-wrap"><img class="category-image-preview" data-role="category-preview" src="' + imageSrc + '" alt="Category image preview"' + (imageSrc ? "" : " hidden") + '>' +
+      '<div class="full category-image-preview-wrap"><img class="category-image-preview" data-role="category-preview"' + (imageSrc ? ' src="' + imageSrc + '"' : "") + ' alt="Category image preview"' + (imageSrc ? "" : " hidden") + '>' +
       '<button class="btn small ghost" type="button" data-action="remove-category-image"' + (imageSrc ? "" : " hidden") + ">Remove image</button></div>" +
       field("Sort order", '<input name="sort" type="number" step="1" value="' + esc(cat ? cat.sort : 0) + '">') +
       (activeRow ? '<div class="full">' + activeRow + "</div>" : "") +

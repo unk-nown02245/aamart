@@ -105,9 +105,9 @@ function categoryImage(value) {
 function setupImageFallbacks() {
   document.addEventListener("error", (event) => {
     const img = event.target;
-    if (!img || img.tagName !== "IMG" || !img.dataset.fallback || img.dataset.fallbackApplied) return;
+    if (!img || img.tagName !== "IMG" || img.dataset.fallbackApplied) return;
     img.dataset.fallbackApplied = "1";
-    img.src = img.dataset.fallback;
+    img.src = img.dataset.fallback || "/img/placeholder.svg";
   }, true);
 }
 
