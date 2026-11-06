@@ -48,6 +48,36 @@ function t(key) {
   return I18N[key] || key;
 }
 
+const ORDER_FILTERS = {
+  all: { label: "All", statuses: null },
+  "to-ship": { label: "To Ship", statuses: ["Ordered", "Packed"] },
+  "in-transit": { label: "In Transit", statuses: ["Shipped", "Out for Delivery"] },
+  delivered: { label: "Delivered", statuses: ["Delivered"] },
+};
+
+const ICON_PATHS = {
+  home: '<path d="M3.5 10.5 12 3.5l8.5 7"></path><path d="M5.5 9.5v10h13v-10"></path><path d="M9.5 19.5v-5h5v5"></path>',
+  package: '<path d="M4 7.5 12 3.5l8 4v9l-8 4-8-4z"></path><path d="M4 7.5 12 11.5l8-4"></path><path d="M12 11.5v9"></path>',
+  box: '<rect x="4" y="7" width="16" height="13" rx="2"></rect><path d="M8 7V5h8v2"></path><path d="M4 11h16"></path>',
+  truck: '<path d="M3.5 6.5h10v9h-10z"></path><path d="M13.5 9.5h3.5l3 3v3h-6.5"></path><circle cx="7" cy="17.5" r="1.5"></circle><circle cx="17" cy="17.5" r="1.5"></circle>',
+  check: '<circle cx="12" cy="12" r="8.5"></circle><path d="m8.5 12 2.3 2.3 4.7-4.8"></path>',
+  heart: '<path d="M12 20s-7-4.3-7-9.2A4.2 4.2 0 0 1 12 7.4a4.2 4.2 0 0 1 7 3.4C19 15.7 12 20 12 20z"></path>',
+  pin: '<path d="M12 21s6.5-5.4 6.5-11A6.5 6.5 0 0 0 5.5 10c0 5.6 6.5 11 6.5 11z"></path><circle cx="12" cy="10" r="2.3"></circle>',
+  card: '<rect x="3.5" y="5.5" width="17" height="13" rx="2.5"></rect><path d="M3.5 10h17"></path><path d="M7 14.5h4"></path>',
+  bell: '<path d="M6.5 10a5.5 5.5 0 0 1 11 0c0 5 2 6 2 6h-15s2-1 2-6z"></path><path d="M10 19a2 2 0 0 0 4 0"></path>',
+  settings: '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle>',
+  help: '<circle cx="12" cy="12" r="8.5"></circle><path d="M9.7 9.2a2.5 2.5 0 0 1 4.8.8c0 1.7-2.5 2-2.5 3.5"></path><path d="M12 17h.01"></path>',
+  chevron: '<path d="m9 6 6 6-6 6"></path>',
+  pencil: '<path d="M4 20h4l10.5-10.5a2.1 2.1 0 0 0-3-3L5 17z"></path><path d="m13.5 6.5 3 3"></path>',
+  logout: '<path d="M9 4.5H5.5A1.5 1.5 0 0 0 4 6v12a1.5 1.5 0 0 0 1.5 1.5H9"></path><path d="M15 8l4 4-4 4"></path><path d="M19 12H9"></path>',
+  clock: '<circle cx="12" cy="12" r="8.5"></circle><path d="M12 7.5V12l3 1.8"></path>',
+  user: '<circle cx="12" cy="8" r="3.5"></circle><path d="M5 20c.6-3.5 3.2-5.5 7-5.5s6.4 2 7 5.5"></path>',
+};
+
+function icon(name, className) {
+  return '<svg class="' + (className || "") + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (ICON_PATHS[name] || "") + "</svg>";
+}
+
 class ApiError extends Error {
   constructor(message, status) {
     super(message);
@@ -263,6 +293,7 @@ function parseRoute() {
   if (head === "order" && parts[1]) return { name: "order", id: parts[1], query, path: pathPart };
   if (head === "success" && parts[1]) return { name: "success", id: parts[1], query, path: pathPart };
   if (head === "account") return { name: "account", query, path: pathPart };
+  if (head === "recent") return { name: "recent", query, path: pathPart };
   if (head === "wishlist") return { name: "wishlist", query, path: pathPart };
   if (head === "login") return { name: "login", query, path: pathPart };
   if (head === "register") return { name: "register", query, path: pathPart };
@@ -302,10 +333,11 @@ async function render() {
       case "product": return await renderProduct(token, route.id);
       case "cart": return await renderCart(token);
       case "checkout": return await renderCheckout(token);
-      case "orders": return await renderOrders(token);
+      case "orders": return await renderOrders(token, route);
       case "order": return await renderOrder(token, route.id);
       case "success": return await renderSuccess(token, route.id);
       case "account": return await renderAccount(token);
+      case "recent": return await renderRecent(token);
       case "wishlist": return await renderWishlist(token);
       case "login": return renderLogin(token, route);
       case "register": return renderRegister(token, route);
@@ -378,6 +410,13 @@ function productCard(p) {
 function productRail(products) {
   if (!products || !products.length) return '<p class="muted small">No products to show.</p>';
   return '<div class="rail">' + products.map(productCard).join("") + "</div>";
+}
+
+async function loadRecentProducts(limit) {
+  const ids = state.recentlyViewed.slice(0, limit || 12);
+  if (!ids.length) return [];
+  const products = await Promise.all(ids.map((id) => api("/api/products/" + encodeURIComponent(id), { auth: false }).catch(() => null)));
+  return products.filter(Boolean);
 }
 
 function sectionHead(title, href) {
@@ -830,13 +869,28 @@ function orderCard(o) {
   "</div>";
 }
 
-async function renderOrders(token) {
+function matchesOrderFilter(order, filter) {
+  const def = ORDER_FILTERS[filter] || ORDER_FILTERS.all;
+  return !def.statuses || def.statuses.includes(order.status);
+}
+
+async function renderOrders(token, route) {
   if (!requireAuth("/orders")) return;
   const data = await api("/api/orders");
   if (token !== renderToken) return;
   const orders = data.orders || [];
+  const filter = route && route.query && ORDER_FILTERS[route.query.filter] ? route.query.filter : "all";
+  const visible = orders.filter((o) => matchesOrderFilter(o, filter));
+  const filters = Object.keys(ORDER_FILTERS).map((key) => {
+    const def = ORDER_FILTERS[key];
+    const href = key === "all" ? "#/orders" : "#/orders?filter=" + encodeURIComponent(key);
+    return '<a class="order-filter' + (key === filter ? " active" : "") + '" href="' + href + '">' + escapeHtml(def.label) + "</a>";
+  }).join("");
+  const body = visible.length
+    ? visible.map(orderCard).join("")
+    : emptyView(icon("package"), "No orders in this view", "Try another order filter to see your purchases.", "#/orders", "View All Orders");
   $("#app").innerHTML = '<div class="page-head"><h1>' + t("orders") + "</h1></div>" +
-    (orders.length ? orders.map(orderCard).join("") : emptyView("\u{1F4E6}", t("emptyOrders"), "Your placed orders will appear here.", "#/", "Start Shopping"));
+    (orders.length ? '<div class="order-filters">' + filters + "</div>" : "") + body;
 }
 
 async function renderOrder(token, id) {
@@ -912,49 +966,197 @@ async function renderSuccess(token, id) {
 /* ---------------------------------------------------------------------------
    Account
    --------------------------------------------------------------------------- */
+function accountMenuRow(item) {
+  const inner =
+    '<span class="acct-row-icon">' + icon(item.icon) + "</span>" +
+    '<span class="acct-row-text"><strong>' + escapeHtml(item.title) + "</strong><span>" + escapeHtml(item.text) + "</span></span>" +
+    icon("chevron", "acct-row-chev");
+  return item.href
+    ? '<a class="acct-row" href="' + item.href + '">' + inner + "</a>"
+    : '<button class="acct-row" type="button" data-action="' + item.action + '">' + inner + "</button>";
+}
+
+function accountStat(count, label, filter, iconName) {
+  const href = "#/orders" + (filter ? "?filter=" + encodeURIComponent(filter) : "");
+  return '<a class="acct-stat" href="' + href + '">' + icon(iconName) + "<strong>" + count + "</strong><span>" + escapeHtml(label) + "</span></a>";
+}
+
 async function renderAccount(token) {
   if (!requireAuth("/account")) return;
   await refreshMe();
-  const addrRes = await api("/api/addresses");
+  const [ordersRes, recent] = await Promise.all([
+    api("/api/orders"),
+    loadRecentProducts(6),
+  ]);
   if (token !== renderToken) return;
   const u = state.user || { name: "", email: "", phone: "" };
-  const addresses = addrRes.addresses || [];
-  const initial = (u.name || "A").trim().charAt(0).toUpperCase();
+  const orders = ordersRes.orders || [];
+  const initial = (u.name || u.email || "A").trim().charAt(0).toUpperCase();
+  const counts = {
+    all: orders.length,
+    toShip: orders.filter((o) => matchesOrderFilter(o, "to-ship")).length,
+    inTransit: orders.filter((o) => matchesOrderFilter(o, "in-transit")).length,
+    delivered: orders.filter((o) => matchesOrderFilter(o, "delivered")).length,
+  };
+  const menu = [
+    { title: "My Orders", text: "Track and manage your purchases", icon: "package", href: "#/orders" },
+    { title: "Wishlist", text: "Products you saved for later", icon: "heart", href: "#/wishlist" },
+    { title: "Saved Addresses", text: "Manage your delivery addresses", icon: "pin", action: "open-addresses" },
+    { title: "Payments", text: "Payment methods and preferences", icon: "card", action: "open-payments" },
+    { title: "Notifications", text: "Order updates and alerts", icon: "bell", action: "open-notifications" },
+    { title: "Settings", text: "Profile and security settings", icon: "settings", action: "open-profile" },
+    { title: "Help & Support", text: "Get help with your orders", icon: "help", href: "#/contact" },
+  ];
+  const recentHtml = recent.length
+    ? '<div class="rail">' + recent.map(productCard).join("") + "</div>"
+    : '<div class="acct-recent-empty"><span class="acct-row-icon">' + icon("clock") + '</span><div><strong>Nothing here yet</strong><p>Products you view will appear here.</p></div><a class="link" href="#/" style="margin-left:auto;font-size:12.5px;font-weight:800;flex:0 0 auto">Browse</a></div>';
 
-  const addressHtml = addresses.length
-    ? addresses.map((a) =>
-        '<div class="address-card"><div class="a-head"><span class="a-name">' + escapeHtml(a.name) + ' <span class="a-tag">' + escapeHtml(a.type || "Home") + (a.is_default ? " \u00B7 Default" : "") + "</span></span></div>" +
-          '<div class="small">' + escapeHtml(a.line1) + (a.line2 ? ", " + escapeHtml(a.line2) : "") + ", " + escapeHtml(a.city) + ", " + escapeHtml(a.state) + " - " + escapeHtml(a.pincode) + "<br>Phone: " + escapeHtml(a.phone) + "</div>" +
-          '<div class="a-actions"><button class="link" data-action="edit-address" data-id="' + a.id + '">Edit</button><button class="link" data-action="delete-address" data-id="' + a.id + '" style="color:var(--red)">Delete</button></div>' +
-        "</div>"
-      ).join("")
-    : '<p class="muted small">No saved addresses yet.</p>';
-
+  setMeta("My Account");
   $("#app").innerHTML =
-    '<div class="page-head"><h1>' + t("account") + "</h1></div>" +
-    '<div class="account-grid">' +
-      '<div class="card"><div class="profile-head"><div class="avatar">' + escapeHtml(initial) + '</div><div><strong>' + escapeHtml(u.name || "Customer") + '</strong><div class="muted small">' + escapeHtml(u.email || "") + "</div></div></div>" +
-        '<div class="menu-list" style="margin-top:12px">' +
-          '<a class="menu-item" href="#/orders"><span class="mi-icon">\u{1F4E6}</span>My Orders<span class="mi-arrow">\u203A</span></a>' +
-          '<a class="menu-item" href="#/wishlist"><span class="mi-icon">\u2665</span>' + t("wishlist") + '<span class="mi-arrow">\u203A</span></a>' +
-          '<a class="menu-item" href="#/cart"><span class="mi-icon">\u{1F6D2}</span>' + t("cart") + '<span class="mi-arrow">\u203A</span></a>' +
-          '<button class="menu-item" style="width:100%;background:none;border:0;text-align:left;border-bottom:1px solid var(--border)" data-action="logout"><span class="mi-icon">\u{1F6AA}</span>' + t("logout") + '<span class="mi-arrow">\u203A</span></button>' +
+    '<div class="account-page">' +
+      '<div class="acct-title"><h1>My Account</h1><p>Manage your profile, orders and preferences.</p></div>' +
+      '<section class="acct-hero">' +
+        '<div class="acct-avatar">' + escapeHtml(initial) + "</div>" +
+        '<div class="acct-hero-info">' +
+          "<h2>" + escapeHtml(u.name || "Customer") + "</h2>" +
+          "<p>" + escapeHtml(u.email || "") + "</p>" +
+          (u.emailVerified ? '<span class="acct-verified">' + icon("check") + "Verified Account</span>" : "") +
         "</div>" +
-      "</div>" +
-      '<div>' +
-        '<div class="card"><div class="card-title">Profile Details</div>' +
-          '<form data-form="profile">' +
-            '<div class="field"><label>Full name</label><input class="input" name="name" value="' + escapeHtml(u.name) + '" required></div>' +
-            '<div class="field"><label>Email address</label><input class="input" value="' + escapeHtml(u.email) + '" disabled></div>' +
-            '<div class="field"><label>Mobile number</label><input class="input" name="phone" value="' + escapeHtml(u.phone) + '" maxlength="10" required></div>' +
-            '<div class="field-row"><div class="field"><label>New password (optional)</label><input class="input" type="password" name="password" minlength="10" placeholder="Leave blank to keep"></div>' +
-            '<div class="field"><label>Current password</label><input class="input" type="password" name="currentPassword" placeholder="Required to change"></div></div>' +
-            '<button class="btn" type="submit">Save Changes</button>' +
-          "</form>" +
+        '<button class="acct-edit" type="button" data-action="open-profile">' + icon("pencil") + "Edit Profile" + icon("chevron") + "</button>" +
+      "</section>" +
+      '<section class="acct-card">' +
+        '<div class="acct-card-head"><h2>Your Orders</h2><a href="#/orders">View All</a></div>' +
+        '<div class="acct-stats">' +
+          accountStat(counts.all, "Orders", "", "package") +
+          accountStat(counts.toShip, "To Ship", "to-ship", "box") +
+          accountStat(counts.inTransit, "In Transit", "in-transit", "truck") +
+          accountStat(counts.delivered, "Delivered", "delivered", "check") +
         "</div>" +
-        '<div class="card"><div class="card-title">Saved Addresses <button class="btn small secondary" data-action="open-address">+ Add Address</button></div>' + addressHtml + "</div>" +
-      "</div>" +
+      "</section>" +
+      '<section class="acct-card">' +
+        '<div class="acct-menu">' + menu.map(accountMenuRow).join("") + "</div>" +
+        '<button class="acct-logout" type="button" data-action="logout">' + icon("logout") + "Logout</button>" +
+      "</section>" +
+      '<section class="acct-recent">' +
+        '<div class="section-head"><h2>Recently Viewed</h2><a href="#/recent">See All \u203A</a></div>' +
+        recentHtml +
+      "</section>" +
     "</div>";
+}
+
+function openProfileModal() {
+  const u = state.user || {};
+  showModal(
+    '<div class="modal-head"><h3>Edit Profile</h3><button class="modal-close" type="button" data-action="close-modal" aria-label="Close">\u00D7</button></div>' +
+    '<form data-form="profile">' +
+      '<div class="field"><label>Full name</label><input class="input" name="name" value="' + escapeHtml(u.name || "") + '" required></div>' +
+      '<div class="field"><label>Email address</label><input class="input" value="' + escapeHtml(u.email || "") + '" disabled></div>' +
+      '<div class="field"><label>Mobile number</label><input class="input" name="phone" inputmode="numeric" maxlength="10" value="' + escapeHtml(u.phone || "") + '" required></div>' +
+      '<div class="field"><label>New password (optional)</label><input class="input" type="password" name="password" minlength="10" placeholder="Leave blank to keep current password"></div>' +
+      '<div class="field"><label>Current password</label><input class="input" type="password" name="currentPassword" placeholder="Required to change password"></div>' +
+      '<div class="modal-actions"><button type="button" class="btn ghost" data-action="close-modal">Cancel</button><button class="btn" type="submit">Save Changes</button></div>' +
+    "</form>"
+  );
+}
+
+function addressManagerCard(a) {
+  return '<div class="acct-address">' +
+    '<div class="acct-address-head"><strong>' + escapeHtml(a.name) + "</strong>" +
+      '<span class="a-tag">' + escapeHtml(a.type || "Home") + "</span>" +
+      (a.is_default ? '<span class="a-default">Default</span>' : "") +
+    "</div>" +
+    "<p>" + escapeHtml(a.line1) + (a.line2 ? ", " + escapeHtml(a.line2) : "") + ", " + escapeHtml(a.city) + ", " + escapeHtml(a.state) + " - " + escapeHtml(a.pincode) + "</p>" +
+    "<p>Phone: " + escapeHtml(a.phone) + "</p>" +
+    '<div class="row" style="gap:8px;margin-top:10px">' +
+      '<button class="btn small secondary" type="button" data-action="edit-address" data-id="' + escapeHtml(a.id) + '">Edit</button>' +
+      '<button class="btn small ghost" type="button" data-action="delete-address" data-id="' + escapeHtml(a.id) + '" style="color:var(--red)">Delete</button>' +
+    "</div>" +
+  "</div>";
+}
+
+async function openAddressManager() {
+  const data = await api("/api/addresses");
+  const addresses = data.addresses || [];
+  showModal(
+    '<div class="modal-head"><h3>Saved Addresses</h3><button class="modal-close" type="button" data-action="close-modal" aria-label="Close">\u00D7</button></div>' +
+    '<div class="acct-modal-list">' +
+      (addresses.length
+        ? addresses.map(addressManagerCard).join("")
+        : '<div class="acct-modal-empty"><span class="acct-row-icon">' + icon("pin") + "</span><strong>No saved addresses</strong><p>Add an address for faster checkout.</p></div>") +
+    "</div>" +
+    '<button class="btn block" type="button" style="margin-top:12px" data-action="open-address">+ Add New Address</button>'
+  );
+}
+
+function openPaymentsModal() {
+  const methods = (state.settings && state.settings.paymentMethods) || {};
+  const meta = {
+    COD: ["Cash on Delivery", "Pay in cash when your order arrives."],
+    UPI: ["UPI", "Pay using any UPI app."],
+    CARD: ["Card", "Pay using a debit or credit card."],
+    NETBANKING: ["Net Banking", "Pay directly from your bank account."],
+  };
+  const enabled = Object.keys(methods).filter((key) => methods[key]);
+  const rows = enabled.length
+    ? enabled.map((key) => {
+        const info = meta[key] || [key, "Available at checkout."];
+        return '<div class="acct-pay"><span class="acct-row-icon">' + icon("card") + "</span><div><strong>" + escapeHtml(info[0]) + "</strong><p>" + escapeHtml(info[1]) + "</p></div></div>";
+      }).join("")
+    : '<div class="acct-modal-empty"><span class="acct-row-icon">' + icon("card") + "</span><strong>No payment methods enabled</strong><p>Please check again later.</p></div>";
+  showModal(
+    '<div class="modal-head"><h3>Payment Methods</h3><button class="modal-close" type="button" data-action="close-modal" aria-label="Close">\u00D7</button></div>' +
+    '<div class="acct-modal-list">' + rows + "</div>" +
+    '<p class="acct-note">Aamart does not store saved card numbers or UPI PINs. Available methods are shown at checkout.</p>'
+  );
+}
+
+async function openNotificationsModal() {
+  if (!state.token) {
+    showToast("Please login to view notifications", "error");
+    go("/login?next=/account");
+    return;
+  }
+  const data = await api("/api/orders");
+  const orders = (data.orders || []).slice(0, 8);
+  const rows = orders.map((o) => {
+    const statusText = o.status === "Delivered" ? "Delivered successfully"
+      : o.status === "Cancelled" ? "Order cancelled"
+      : "Status updated to " + o.status;
+    const iconName = o.status === "Delivered" ? "check" : o.status === "Cancelled" ? "package" : "truck";
+    const when = new Date(o.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" });
+    return '<a class="acct-notif" href="#/order/' + o.id + '">' +
+      '<span class="acct-row-icon">' + icon(iconName) + "</span>" +
+      '<span class="acct-notif-body"><strong>Order #' + escapeHtml(o.orderNo) + "</strong><p>" + escapeHtml(statusText) + "</p></span>" +
+      "<time>" + escapeHtml(when) + "</time>" +
+    "</a>";
+  }).join("");
+  showModal(
+    '<div class="modal-head"><h3>Notifications</h3><button class="modal-close" type="button" data-action="close-modal" aria-label="Close">\u00D7</button></div>' +
+    '<div class="acct-modal-list">' +
+      (orders.length
+        ? rows
+        : '<div class="acct-modal-empty"><span class="acct-row-icon">' + icon("bell") + "</span><strong>No notifications yet</strong><p>Order updates will appear here.</p></div>") +
+    "</div>" +
+    '<p class="acct-note">You will see updates here when your orders move through delivery.</p>'
+  );
+}
+
+function openLogoutConfirm() {
+  showModal(
+    '<div class="modal-head"><h3>Logout?</h3><button class="modal-close" type="button" data-action="close-modal" aria-label="Close">\u00D7</button></div>' +
+    '<p class="muted" style="margin:0 0 16px">You can sign back in anytime to view your orders and saved items.</p>' +
+    '<div class="modal-actions"><button type="button" class="btn ghost" data-action="close-modal">Cancel</button><button type="button" class="btn danger" data-action="confirm-logout">Logout</button></div>'
+  );
+}
+
+async function renderRecent(token) {
+  const products = await loadRecentProducts(12);
+  if (token !== renderToken) return;
+  setMeta("Recently Viewed");
+  $("#app").innerHTML = '<div class="page-head"><h1>Recently Viewed</h1></div>' +
+    (products.length
+      ? '<div class="product-grid">' + products.map(productCard).join("") + "</div>"
+      : emptyView(icon("clock"), "No recently viewed products", "Products you open will appear here.", "#/", "Explore Products"));
 }
 
 async function renderWishlist(token) {
@@ -1373,6 +1575,10 @@ async function handleAction(action, el) {
   }
 
   if (action === "open-address") { openAddressModal(); return; }
+  if (action === "open-addresses") { await openAddressManager(); return; }
+  if (action === "open-profile") { openProfileModal(); return; }
+  if (action === "open-payments") { openPaymentsModal(); return; }
+  if (action === "open-notifications") { await openNotificationsModal(); return; }
   if (action === "edit-address") {
     try {
       const data = await api("/api/addresses");
@@ -1383,13 +1589,18 @@ async function handleAction(action, el) {
   }
   if (action === "delete-address") {
     if (!confirm("Delete this address?")) return;
-    try { await api("/api/addresses/" + id, { method: "DELETE" }); render(); }
-    catch (e) { showToast(e.message, "error"); }
+    try {
+      await api("/api/addresses/" + id, { method: "DELETE" });
+      closeModal();
+      render();
+    } catch (e) { showToast(e.message, "error"); }
     return;
   }
   if (action === "close-modal") { closeModal(); return; }
-  if (action === "logout") {
+  if (action === "logout") { openLogoutConfirm(); return; }
+  if (action === "confirm-logout") {
     try { await api("/api/auth/logout", { method: "POST" }); } catch (e) {}
+    closeModal();
     clearAuth();
     showToast("Logged out", "success");
     go("/");
@@ -1554,6 +1765,7 @@ document.addEventListener("submit", async (e) => {
       });
       if (data.token) saveToken(data.token, data.user);
       else state.user = data.user;
+      closeModal();
       showToast("Profile updated", "success");
       render();
       return;
