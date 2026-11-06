@@ -155,7 +155,6 @@ p { margin: 0 0 10px; }
 }
 .icon-btn:hover { background: rgba(255, 255, 255, 0.14); }
 .icon-btn .label { font-size: 13px; }
-.lang-btn { font-size: 13px; border: 1px solid rgba(255,255,255,0.5); padding: 6px 8px; }
 .cart-link .badge {
   position: absolute; top: 2px; right: 2px;
   background: #f59e0b; color: #111; font-size: 10px; font-weight: 800;

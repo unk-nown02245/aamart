@@ -10,7 +10,6 @@ const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
 const state = {
   token: localStorage.getItem("aamart_token") || "",
   user: null,
-  lang: localStorage.getItem("aamart_lang") || "en",
   settings: null,
   categories: [],
   cartCount: 0,
@@ -32,35 +31,20 @@ const state = {
 let renderToken = 0;
 
 const I18N = {
-  en: {
-    home: "Home", categories: "Categories", cart: "Cart", orders: "Orders", account: "Account",
-    search: "Search Aamart", searchAria: "Search Aamart", addToCart: "Add to Cart", buyNow: "Buy Now",
-    viewAll: "View all", deals: "Deals of the Day", trending: "Trending Products",
-    newArrivals: "New Arrivals", bestDiscounts: "Best Discounts", recentlyViewed: "Recently Viewed",
-    proceed: "Proceed to Checkout", placeOrder: "Place Order", continue: "Continue",
-    login: "Login", register: "Create Account", logout: "Logout", wishlist: "Wishlist",
-    emptyCart: "Your cart is empty", emptyOrders: "No orders yet", emptyWishlist: "Your wishlist is empty",
-    free: "FREE", total: "Total", itemTotal: "Item total", discount: "Discount",
-    delivery: "Delivery", tax: "Tax", coupon: "Coupon", apply: "Apply", remove: "Remove",
-    inStock: "In stock", outOfStock: "Out of stock", lowStock: "Only a few left",
-    clear: "Clear", recentSearches: "Recent searches", noMatches: "No matches for", seeAllResults: "See all results for",
-  },
-  hi: {
-    home: "होम", categories: "श्रेणियाँ", cart: "कार्ट", orders: "ऑर्डर", account: "खाता",
-    search: "Aamart mein khojein", searchAria: "Aamart mein khojein", addToCart: "कार्ट में डालें", buyNow: "अभी खरीदें",
-    viewAll: "सभी देखें", deals: "आज के ऑफर", trending: "ट्रेंडिंग उत्पाद",
-    newArrivals: "नए उत्पाद", bestDiscounts: "सबसे अच्छी छूट", recentlyViewed: "हाल में देखे गए",
-    proceed: "चेकआउट करें", placeOrder: "ऑर्डर करें", continue: "जारी रखें",
-    login: "लॉगिन", register: "खाता बनाएं", logout: "लॉगआउट", wishlist: "विशलिस्ट",
-    emptyCart: "आपका कार्ट खाली है", emptyOrders: "अभी कोई ऑर्डर नहीं", emptyWishlist: "आपकी विशलिस्ट खाली है",
-    free: "मुफ़्त", total: "कुल", itemTotal: "आइटम कुल", discount: "छूट",
-    delivery: "डिलीवरी", tax: "कर", coupon: "कूपन", apply: "लागू करें", remove: "हटाएं",
-    inStock: "स्टॉक में", outOfStock: "स्टॉक ख़त्म", lowStock: "कुछ ही बचे हैं",
-    clear: "साफ़ करें", recentSearches: "हाल की खोजें", noMatches: "कोई मेल नहीं", seeAllResults: "सभी परिणाम देखें",
-  },
+  home: "Home", categories: "Categories", cart: "Cart", orders: "Orders", account: "Account",
+  search: "Search Aamart", searchAria: "Search Aamart", addToCart: "Add to Cart", buyNow: "Buy Now",
+  viewAll: "View all", deals: "Deals of the Day", trending: "Trending Products",
+  newArrivals: "New Arrivals", bestDiscounts: "Best Discounts", recentlyViewed: "Recently Viewed",
+  proceed: "Proceed to Checkout", placeOrder: "Place Order", continue: "Continue",
+  login: "Login", register: "Create Account", logout: "Logout", wishlist: "Wishlist",
+  emptyCart: "Your cart is empty", emptyOrders: "No orders yet", emptyWishlist: "Your wishlist is empty",
+  free: "FREE", total: "Total", itemTotal: "Item total", discount: "Discount",
+  delivery: "Delivery", tax: "Tax", coupon: "Coupon", apply: "Apply", remove: "Remove",
+  inStock: "In stock", outOfStock: "Out of stock", lowStock: "Only a few left",
+  clear: "Clear", recentSearches: "Recent searches", noMatches: "No matches for", seeAllResults: "See all results for",
 };
 function t(key) {
-  return (I18N[state.lang] && I18N[state.lang][key]) || I18N.en[key] || key;
+  return I18N[key] || key;
 }
 
 class ApiError extends Error {
@@ -240,8 +224,6 @@ function updateChrome(route) {
     badge.textContent = state.cartCount;
     badge.hidden = !state.cartCount;
   }
-  const langBtn = $("#lang-toggle");
-  if (langBtn) langBtn.textContent = state.lang === "hi" ? "\u0939\u093F" : "EN";
   const search = $("#search-input");
   if (search) {
     search.placeholder = t("search");
@@ -1739,23 +1721,11 @@ function setupSearch() {
   updateClear();
 }
 
-function setupLang() {
-  const btn = $("#lang-toggle");
-  if (!btn) return;
-  btn.addEventListener("click", () => {
-    state.lang = state.lang === "hi" ? "en" : "hi";
-    localStorage.setItem("aamart_lang", state.lang);
-    updateChrome(state.route);
-    render();
-  });
-}
-
 /* ---------------------------------------------------------------------------
    Boot
    --------------------------------------------------------------------------- */
 async function boot() {
   setupSearch();
-  setupLang();
   const year = $("#footer-year");
   if (year) year.textContent = new Date().getFullYear();
   window.addEventListener("hashchange", render);
