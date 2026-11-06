@@ -221,11 +221,11 @@ async function refreshCart() {
 }
 
 function updateChrome(route) {
-  const badge = $("#cart-badge");
-  if (badge) {
+  [$("#cart-badge"), $("#nav-cart-badge")].forEach((badge) => {
+    if (!badge) return;
     badge.textContent = state.cartCount;
     badge.hidden = !state.cartCount;
-  }
+  });
   const search = $("#search-input");
   if (search) {
     search.placeholder = t("search");
