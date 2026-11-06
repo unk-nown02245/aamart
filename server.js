@@ -22,6 +22,7 @@ const {
   constantTimeEqual,
 } = require("./lib/security");
 const { emailConfigured, otpDebugEnabled, sendMail } = require("./lib/mailer");
+const cloud = require("./lib/cloud");
 
 const PORT = Number(process.env.PORT) || 4000;
 const ROOT = __dirname;
@@ -30,9 +31,9 @@ const DATA_DIR = path.join(ROOT, "data");
 const UPLOAD_DIR = path.join(ROOT, "uploads");
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
-const SECRET = loadSecret(DATA_DIR);
-const tokens = createTokenManager(SECRET);
-const db = openDatabase(DATA_DIR);
+let SECRET;
+let tokens;
+let db;
 
 const STATUS_FLOW = ["Ordered", "Packed", "Shipped", "Out for Delivery", "Delivered"];
 const PAYMENT_METHODS = { COD: "codEnabled", UPI: "upiEnabled", Card: "cardEnabled", "Net Banking": "netbankingEnabled", Wallet: "walletEnabled" };
@@ -805,6 +806,7 @@ async function handleApi(req, res, pathname, parsed) {
   if (!rateLimit("api:" + ip, 900, 60 * 1000)) return fail(res, 429, "Too many requests. Please slow down.");
 
   if (seg[1] === "health" && method === "GET") {
+    void cloud.keepAlive();
     return json(res, { status: "ok", name: "Aamart", time: nowIso() });
   }
 
@@ -868,7 +870,8 @@ async function handleApi(req, res, pathname, parsed) {
   if (seg[1] === "auth" && seg[2] === "me" && method === "GET") {
     const user = requireCustomer(req, res);
     if (!user) return;
-    return json(res, { user: sanitizeUser(user) });
+    const token = tokens.sign({ id: user.id, role: "customer", kind: "customer", tv: Number(user.token_version || 0) });
+    return json(res, { user: sanitizeUser(user), token });
   }
 
   if (seg[1] === "auth" && seg[2] === "update" && method === "PUT") {
@@ -1817,20 +1820,34 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, () => {
-  const line = "-".repeat(54);
-  console.log("");
-  console.log("  AAMART is running");
-  console.log("  " + line);
-  console.log("  Storefront      : http://localhost:" + PORT + "/");
-  console.log("  Admin login     : http://localhost:" + PORT + "/admin");
-  console.log("  Super Admin     : http://localhost:" + PORT + "/admin/amirhamza");
-  console.log("  Manager Admin   : http://localhost:" + PORT + "/admin/aditism");
-  console.log("  Product Control : http://localhost:" + PORT + "/admin/products");
-  console.log("  " + line);
-  console.log("  Admin credentials: see data/ADMIN-CREDENTIALS.txt");
-  console.log("  Override with AAMART_SUPER_PASSWORD / AAMART_MANAGER_PASSWORD.");
-  console.log("  " + line);
-  console.log("  Database        : data/aamart.db (SQLite)");
-  console.log("");
+async function start() {
+  await cloud.restore(ROOT);
+  SECRET = loadSecret(DATA_DIR);
+  tokens = createTokenManager(SECRET);
+  db = openDatabase(DATA_DIR);
+  cloud.attach({ db, root: ROOT });
+
+  server.listen(PORT, () => {
+    const line = "-".repeat(54);
+    console.log("");
+    console.log("  AAMART is running");
+    console.log("  " + line);
+    console.log("  Storefront      : http://localhost:" + PORT + "/");
+    console.log("  Admin login     : http://localhost:" + PORT + "/admin");
+    console.log("  Super Admin     : http://localhost:" + PORT + "/admin/amirhamza");
+    console.log("  Manager Admin   : http://localhost:" + PORT + "/admin/aditism");
+    console.log("  Product Control : http://localhost:" + PORT + "/admin/products");
+    console.log("  " + line);
+    console.log("  Admin credentials: see data/ADMIN-CREDENTIALS.txt");
+    console.log("  Override with AAMART_SUPER_PASSWORD / AAMART_MANAGER_PASSWORD.");
+    console.log("  " + line);
+    console.log("  Database        : data/aamart.db (SQLite)");
+    console.log("  Cloud backup    : " + (cloud.enabled() ? "enabled" : "disabled"));
+    console.log("");
+  });
+}
+
+start().catch((e) => {
+  console.error("[AAMART] Startup failed:", e);
+  process.exit(1);
 });

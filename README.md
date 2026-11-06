@@ -41,18 +41,50 @@ current values are also written to `data/ADMIN-CREDENTIALS.txt` (gitignored).
 | `PORT` | HTTP port (default `4000`) |
 | `AAMART_SUPER_PASSWORD` | Override the super-admin password on first credential sync |
 | `AAMART_MANAGER_PASSWORD` | Override the manager password on first credential sync |
-| `AAMART_TOKEN_TTL_MS` | Session lifetime in ms (default 8 hours, minimum 15 minutes) |
+| `AAMART_TOKEN_TTL_MS` | Session lifetime in ms (default 365 days, minimum 15 minutes) |
+| `AAMART_SECRET` | Stable token/OTP signing secret. Set a long random value on Render |
 | `AAMART_TRUST_PROXY=1` | Trust `X-Forwarded-For` / `X-Real-IP` (set only behind a trusted proxy) |
 | `AAMART_ONLINE_PAYMENTS=1` | Allow online payment methods (gateway integration still required) |
 | `AAMART_EMAIL_FROM` | Verified sender address for OTP emails |
+| `AAMART_BREVO_API_KEY` | Brevo HTTPS API key for OTP emails |
 | `AAMART_RESEND_API_KEY` | Resend API key for OTP emails |
 | `AAMART_EMAIL_WEBHOOK_URL` | Alternative HTTPS email webhook |
 | `AAMART_EMAIL_WEBHOOK_TOKEN` | Bearer token for the email webhook |
 | `AAMART_OTP_DEBUG=1` | Log OTPs to the server console for local testing only |
+| `SUPABASE_URL` | Free Supabase project URL for cloud backup/restore |
+| `SUPABASE_SERVICE_ROLE_KEY` | Supabase service-role key (server-side only, never expose it) |
+| `AAMART_BACKUP_BUCKET` | Private Supabase Storage bucket (default `aamart-backups`) |
 
 OTP login and password reset stay disabled until `AAMART_EMAIL_FROM` plus either
-`AAMART_RESEND_API_KEY` or `AAMART_EMAIL_WEBHOOK_URL` are configured. Do not enable
-`AAMART_OTP_DEBUG` in production.
+`AAMART_BREVO_API_KEY`, `AAMART_RESEND_API_KEY`, or `AAMART_EMAIL_WEBHOOK_URL` are
+configured. Do not enable `AAMART_OTP_DEBUG` in production.
+
+### Free Brevo OTP setup (works on Render)
+
+Render free web services cannot send SMTP on ports 25, 465, or 587. Use Brevo's HTTPS
+API instead:
+
+1. Create a free Brevo account and verify your Gmail address as a sender.
+2. Set `AAMART_EMAIL_FROM` to that Gmail address.
+3. Set `AAMART_BREVO_API_KEY` to the Brevo API key.
+4. OTP login and password reset become available automatically.
+
+### Free cloud data backup (Supabase Storage)
+
+Render free has an ephemeral filesystem. To keep users, carts, wishlists, orders, and
+uploads across restarts:
+
+1. Create a free Supabase project.
+2. Copy the project URL and service-role key into `SUPABASE_URL` and
+   `SUPABASE_SERVICE_ROLE_KEY` on Render.
+3. The app creates the private `aamart-backups` bucket automatically.
+4. Set `AAMART_SECRET` to a long random value so existing logins survive restarts.
+5. Keep the Supabase project active (the app pings it from `/api/health`).
+
+The app restores the latest backup on startup and uploads a new backup after writes and
+on shutdown. If a backup exists but restore fails, the app stops instead of starting
+with an empty database. Free Supabase projects can pause after a week without activity;
+the keep-alive ping prevents that while the Render service is running.
 
 ## Admin routes
 
@@ -157,9 +189,10 @@ reviews, and manager RBAC.
 ## Deployment notes
 
 - Run behind a reverse proxy with HTTPS.
-- Persist `data/` and `uploads/` between deployments.
+- Persist `data/` and `uploads/` between deployments, or use the free Supabase cloud
+  backup described above.
 - Set `AAMART_TRUST_PROXY=1` only when a trusted reverse proxy is in front.
 - Store `data/ADMIN-CREDENTIALS.txt` in a secret manager, then delete it.
-- Render's free tier has an ephemeral filesystem: SQLite data, uploads, and secrets can
-  reset on restart. Use persistent storage or an external database for production.
+- Render's free tier has an ephemeral filesystem. Without `SUPABASE_URL` and
+  `SUPABASE_SERVICE_ROLE_KEY`, SQLite data, uploads, and secrets reset on restart.
 - Keep `PORT` and filesystem permissions restricted to the service user.

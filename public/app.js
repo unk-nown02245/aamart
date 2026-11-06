@@ -196,6 +196,7 @@ async function refreshMe() {
   try {
     const data = await api("/api/auth/me");
     state.user = data.user;
+    if (data.token) saveToken(data.token, data.user);
   } catch (e) {
     if (e.status === 401) clearAuth();
   }
