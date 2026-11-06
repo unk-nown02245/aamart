@@ -18,28 +18,37 @@
 <body>
   <header class="topbar">
     <div class="topbar-inner">
-      <a class="brand" href="#/" aria-label="Aamart home">
-        <span class="brand-mark">A</span>
-        <span class="brand-text">aamart<small>shop smart</small></span>
-      </a>
+      <div class="topbar-main">
+        <a class="brand" href="#/" aria-label="Aamart home">
+          <span class="brand-mark">A</span>
+          <span class="brand-text">aamart<small>shop smart</small></span>
+        </a>
+
+        <div class="top-actions">
+          <button class="icon-btn lang-btn" id="lang-toggle" title="Change language" aria-label="Change language">EN</button>
+          <a class="icon-btn with-label" href="#/account" id="account-link">
+            <span aria-hidden="true">&#128100;</span><span class="label">Account</span>
+          </a>
+          <a class="icon-btn with-label cart-link" href="#/cart" aria-label="Cart">
+            <span aria-hidden="true">&#128722;</span><span class="label">Cart</span>
+            <span class="badge" id="cart-badge" hidden>0</span>
+          </a>
+        </div>
+      </div>
 
       <form class="search" id="search-form" role="search" autocomplete="off">
-        <span class="search-icon" aria-hidden="true">&#128269;</span>
-        <input id="search-input" type="search" name="q" placeholder="Search for products, brands and more" aria-label="Search products">
-        <button type="submit" class="search-btn">Search</button>
+        <div class="search-field" id="search-field">
+          <input id="search-input" class="search-input" type="search" name="q" placeholder="Search Aamart" aria-label="Search Aamart">
+          <button type="button" class="search-clear hidden" id="search-clear" aria-label="Clear search" title="Clear search">&times;</button>
+        </div>
+        <button type="submit" class="search-btn" aria-label="Search">
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
+            <circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"></circle>
+            <path d="M20 20l-4-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path>
+          </svg>
+        </button>
         <div id="suggestions" class="suggestions hidden" role="listbox"></div>
       </form>
-
-      <div class="top-actions">
-        <button class="icon-btn lang-btn" id="lang-toggle" title="Change language" aria-label="Change language">EN</button>
-        <a class="icon-btn with-label" href="#/account" id="account-link">
-          <span aria-hidden="true">&#128100;</span><span class="label">Account</span>
-        </a>
-        <a class="icon-btn with-label cart-link" href="#/cart" aria-label="Cart">
-          <span aria-hidden="true">&#128722;</span><span class="label">Cart</span>
-          <span class="badge" id="cart-badge" hidden>0</span>
-        </a>
-      </div>
     </div>
   </header>
 

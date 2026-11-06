@@ -34,7 +34,7 @@ let renderToken = 0;
 const I18N = {
   en: {
     home: "Home", categories: "Categories", cart: "Cart", orders: "Orders", account: "Account",
-    search: "Search for products, brands and more", addToCart: "Add to Cart", buyNow: "Buy Now",
+    search: "Search Aamart", searchAria: "Search Aamart", addToCart: "Add to Cart", buyNow: "Buy Now",
     viewAll: "View all", deals: "Deals of the Day", trending: "Trending Products",
     newArrivals: "New Arrivals", bestDiscounts: "Best Discounts", recentlyViewed: "Recently Viewed",
     proceed: "Proceed to Checkout", placeOrder: "Place Order", continue: "Continue",
@@ -43,10 +43,11 @@ const I18N = {
     free: "FREE", total: "Total", itemTotal: "Item total", discount: "Discount",
     delivery: "Delivery", tax: "Tax", coupon: "Coupon", apply: "Apply", remove: "Remove",
     inStock: "In stock", outOfStock: "Out of stock", lowStock: "Only a few left",
+    clear: "Clear", recentSearches: "Recent searches", noMatches: "No matches for", seeAllResults: "See all results for",
   },
   hi: {
     home: "होम", categories: "श्रेणियाँ", cart: "कार्ट", orders: "ऑर्डर", account: "खाता",
-    search: "उत्पाद, ब्रांड और बहुत कुछ खोजें", addToCart: "कार्ट में डालें", buyNow: "अभी खरीदें",
+    search: "Aamart mein khojein", searchAria: "Aamart mein khojein", addToCart: "कार्ट में डालें", buyNow: "अभी खरीदें",
     viewAll: "सभी देखें", deals: "आज के ऑफर", trending: "ट्रेंडिंग उत्पाद",
     newArrivals: "नए उत्पाद", bestDiscounts: "सबसे अच्छी छूट", recentlyViewed: "हाल में देखे गए",
     proceed: "चेकआउट करें", placeOrder: "ऑर्डर करें", continue: "जारी रखें",
@@ -55,6 +56,7 @@ const I18N = {
     free: "मुफ़्त", total: "कुल", itemTotal: "आइटम कुल", discount: "छूट",
     delivery: "डिलीवरी", tax: "कर", coupon: "कूपन", apply: "लागू करें", remove: "हटाएं",
     inStock: "स्टॉक में", outOfStock: "स्टॉक ख़त्म", lowStock: "कुछ ही बचे हैं",
+    clear: "साफ़ करें", recentSearches: "हाल की खोजें", noMatches: "कोई मेल नहीं", seeAllResults: "सभी परिणाम देखें",
   },
 };
 function t(key) {
@@ -241,7 +243,12 @@ function updateChrome(route) {
   const langBtn = $("#lang-toggle");
   if (langBtn) langBtn.textContent = state.lang === "hi" ? "\u0939\u093F" : "EN";
   const search = $("#search-input");
-  if (search) search.placeholder = t("search");
+  if (search) {
+    search.placeholder = t("search");
+    search.setAttribute("aria-label", t("searchAria"));
+  }
+  const searchClear = $("#search-clear");
+  if (searchClear) searchClear.setAttribute("aria-label", t("clear"));
   $$("[data-i18n]").forEach((el) => { el.textContent = t(el.dataset.i18n); });
   const navName = route ? route.name : "home";
   $$(".nav-item").forEach((a) => a.classList.toggle("active", a.dataset.nav === navName));
@@ -1506,48 +1513,230 @@ async function afterLogin() {
 /* ---------------------------------------------------------------------------
    Search suggestions
    --------------------------------------------------------------------------- */
+const RECENT_SEARCHES_KEY = "aamart_recent_searches";
+const SEARCH_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-4-4" stroke-linecap="round"></path></svg>';
+const CLOCK_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2" stroke-linecap="round" stroke-linejoin="round"></path></svg>';
+const TAG_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M20 13l-7 7-9-9V4h7l9 9z" stroke-linejoin="round"></path><circle cx="8.5" cy="8.5" r="1.5"></circle></svg>';
+
+function readRecentSearches() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(RECENT_SEARCHES_KEY) || "[]");
+    if (!Array.isArray(raw)) return [];
+    const seen = new Set();
+    return raw.map((v) => String(v || "").trim()).filter((v) => {
+      const key = v.toLowerCase();
+      if (!v || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    }).slice(0, 5);
+  } catch {
+    return [];
+  }
+}
+
+function saveRecentSearch(value) {
+  const term = String(value || "").trim();
+  if (!term) return;
+  const recent = readRecentSearches().filter((v) => v.toLowerCase() !== term.toLowerCase());
+  recent.unshift(term);
+  try { localStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(recent.slice(0, 5))); } catch {}
+}
+
+function clearRecentSearches() {
+  try { localStorage.removeItem(RECENT_SEARCHES_KEY); } catch {}
+}
+
 function setupSearch() {
   const form = $("#search-form");
   const input = $("#search-input");
   const box = $("#suggestions");
+  const field = $("#search-field");
+  const clearBtn = $("#search-clear");
   if (!form || !input || !box) return;
   let timer = null;
   let seq = 0;
 
-  form.addEventListener("submit", (e) => {
-    e.preventDefault();
-    const q = input.value.trim();
+  const updateClear = () => {
+    const hasValue = input.value.length > 0;
+    if (field) field.classList.toggle("has-value", hasValue);
+    if (clearBtn) clearBtn.classList.toggle("hidden", !hasValue);
+  };
+
+  const hideSuggestions = () => {
     box.classList.add("hidden");
     box.innerHTML = "";
-    go(q ? "/products?q=" + encodeURIComponent(q) : "/products");
+  };
+
+  const showSuggestions = (html) => {
+    box.innerHTML = html;
+    box.classList.remove("hidden");
+  };
+
+  const showRecent = () => {
+    const recent = readRecentSearches();
+    if (!recent.length) { hideSuggestions(); return; }
+    showSuggestions(
+      '<div class="suggestions-head"><span>' + escapeHtml(t("recentSearches")) + "</span>" +
+      '<button type="button" class="suggestions-clear" data-clear-recent>' + escapeHtml(t("clear")) + "</button></div>" +
+      recent.map((term) =>
+        '<button type="button" class="suggestion" data-recent="' + escapeHtml(term) + '">' +
+          '<span class="s-icon" aria-hidden="true">' + CLOCK_ICON + "</span>" +
+          '<span class="s-title">' + escapeHtml(term) + "</span>" +
+        "</button>"
+      ).join("")
+    );
+  };
+
+  const runSearch = (value) => {
+    const term = String(value || "").trim();
+    if (!term) return;
+    saveRecentSearch(term);
+    hideSuggestions();
+    input.value = term;
+    updateClear();
+    go("/products?q=" + encodeURIComponent(term));
     input.blur();
+  };
+
+  const getCategoryMatches = async (term) => {
+    if (!state.categories.length) {
+      try {
+        const data = await api("/api/categories", { auth: false });
+        state.categories = data.categories || [];
+      } catch {
+        return [];
+      }
+    }
+    const needle = term.toLowerCase();
+    const out = [];
+    for (const cat of state.categories) {
+      const catName = String(cat.name || "");
+      const catSlug = String(cat.slug || "");
+      if (catName && (catName.toLowerCase().includes(needle) || catSlug.toLowerCase().includes(needle))) {
+        out.push({ name: catName, href: "#/products?category=" + encodeURIComponent(catSlug) });
+      }
+      for (const sub of (cat.subs || [])) {
+        const subName = String(sub.name || "");
+        const subSlug = String(sub.slug || "");
+        if (subName && (subName.toLowerCase().includes(needle) || subSlug.toLowerCase().includes(needle))) {
+          out.push({ name: subName, href: "#/products?category=" + encodeURIComponent(catSlug) + "&sub=" + encodeURIComponent(subSlug) });
+        }
+      }
+      if (out.length >= 3) break;
+    }
+    return out.slice(0, 3);
+  };
+
+  const renderMatches = (term, categories, products) => {
+    const parts = [];
+    if (categories.length) {
+      parts.push(categories.map((cat) =>
+        '<a class="suggestion" href="' + cat.href + '" data-query="' + escapeHtml(term) + '">' +
+          '<span class="s-icon" aria-hidden="true">' + TAG_ICON + "</span>" +
+          '<span class="s-title">' + escapeHtml(cat.name) + "</span>" +
+        "</a>"
+      ).join(""));
+    }
+    if (products.length) {
+      parts.push(products.map((p) =>
+        '<a class="suggestion" href="#/product/' + encodeURIComponent(p.id) + '" data-query="' + escapeHtml(term) + '">' +
+          '<img src="' + safeImage(p.image) + '" alt="">' +
+          '<div><div class="s-title">' + escapeHtml(p.title) + '</div><div class="s-price">' + money(p.price) + " \u00B7 " + escapeHtml(p.category) + "</div></div>" +
+        "</a>"
+      ).join(""));
+    }
+    if (!categories.length && !products.length) {
+      parts.push('<div class="suggestion-empty">' + escapeHtml(t("noMatches")) + ' "' + escapeHtml(term) + '"</div>');
+    } else {
+      parts.push(
+        '<a class="suggestion" href="#/products?q=' + encodeURIComponent(term) + '" data-query="' + escapeHtml(term) + '">' +
+          '<span class="s-icon" aria-hidden="true">' + SEARCH_ICON + "</span>" +
+          '<span class="s-title s-link">' + escapeHtml(t("seeAllResults")) + ' "' + escapeHtml(term) + '" \u203A</span>' +
+        "</a>"
+      );
+    }
+    showSuggestions(parts.join(""));
+  };
+
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const term = input.value.trim();
+    if (!term) { showRecent(); input.focus(); return; }
+    runSearch(term);
   });
 
   input.addEventListener("input", () => {
-    const q = input.value.trim();
+    updateClear();
+    const term = input.value.trim();
     clearTimeout(timer);
-    if (q.length < 2) { box.classList.add("hidden"); box.innerHTML = ""; return; }
+    seq += 1;
+    if (!term) { showRecent(); return; }
+    if (term.length < 2) { hideSuggestions(); return; }
     timer = setTimeout(async () => {
       const mySeq = ++seq;
       try {
-        const data = await api("/api/products?q=" + encodeURIComponent(q) + "&limit=6", { auth: false });
-        if (mySeq !== seq) return;
-        if (!data.products.length) {
-          box.innerHTML = '<div class="suggestion-empty">No matches for "' + escapeHtml(q) + '"</div>';
-        } else {
-          box.innerHTML = data.products.map((p) =>
-            '<a class="suggestion" href="#/product/' + p.id + '"><img src="' + escapeHtml(p.image) + '" alt=""><div><div class="s-title">' + escapeHtml(p.title) + '</div><div class="s-price">' + money(p.price) + " \u00B7 " + escapeHtml(p.category) + "</div></div></a>"
-          ).join("") + '<a class="suggestion" href="#/products?q=' + encodeURIComponent(q) + '"><div class="s-title" style="color:var(--blue)">See all results for "' + escapeHtml(q) + '" \u203A</div></a>';
-        }
-        box.classList.remove("hidden");
-      } catch {}
-    }, 220);
+        const [data, categories] = await Promise.all([
+          api("/api/products?q=" + encodeURIComponent(term) + "&limit=6", { auth: false }),
+          getCategoryMatches(term),
+        ]);
+        if (mySeq !== seq || input.value.trim() !== term) return;
+        const productLimit = Math.max(0, 6 - categories.length);
+        renderMatches(term, categories, (data.products || []).slice(0, productLimit));
+      } catch {
+        if (mySeq === seq) hideSuggestions();
+      }
+    }, 300);
   });
 
-  input.addEventListener("focus", () => { if (box.innerHTML) box.classList.remove("hidden"); });
-  document.addEventListener("click", (e) => {
-    if (!e.target.closest(".search")) box.classList.add("hidden");
+  input.addEventListener("focus", () => {
+    updateClear();
+    if (!input.value.trim()) showRecent();
+    else if (box.innerHTML) box.classList.remove("hidden");
   });
+
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      hideSuggestions();
+      input.blur();
+    }
+  });
+
+  if (clearBtn) {
+    clearBtn.addEventListener("click", () => {
+      input.value = "";
+      updateClear();
+      hideSuggestions();
+      input.focus();
+      showRecent();
+    });
+  }
+
+  box.addEventListener("click", (e) => {
+    if (e.target.closest("[data-clear-recent]")) {
+      e.preventDefault();
+      clearRecentSearches();
+      hideSuggestions();
+      return;
+    }
+    const recent = e.target.closest("[data-recent]");
+    if (recent) {
+      e.preventDefault();
+      input.value = recent.dataset.recent || "";
+      updateClear();
+      runSearch(input.value);
+      return;
+    }
+    const queryLink = e.target.closest("[data-query]");
+    if (queryLink) saveRecentSearch(queryLink.dataset.query);
+    if (e.target.closest(".suggestion")) hideSuggestions();
+  });
+
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest(".search")) hideSuggestions();
+  });
+
+  window.addEventListener("hashchange", hideSuggestions);
+  updateClear();
 }
 
 function setupLang() {
