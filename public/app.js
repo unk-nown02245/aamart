@@ -22,6 +22,7 @@ const state = {
   otpMode: "login",
   otpSent: false,
   resetSent: false,
+  registerSent: false,
   reviewRating: 5,
   listing: null,
   route: null,
@@ -1005,6 +1006,19 @@ function renderLogin(token, route) {
 function renderRegister(token, route) {
   if (isLoggedIn()) { go("/account"); return; }
   const next = route.query.next || "/";
+  if (state.registerSent) {
+    $("#app").innerHTML =
+      '<div class="auth-wrap"><div class="auth-card">' +
+        '<h1>Verify your email</h1><p class="muted small">We sent a 6-digit verification code to <strong>' + escapeHtml(state.otpEmail) + '</strong>.</p>' +
+        '<form data-form="register-verify" data-next="' + escapeHtml(next) + '">' +
+          '<div class="field"><label>Email address</label><input class="input" name="email" type="email" value="' + escapeHtml(state.otpEmail) + '" readonly></div>' +
+          '<div class="field"><label>Verification OTP</label><input class="input" name="otp" inputmode="numeric" maxlength="6" required placeholder="6-digit OTP"></div>' +
+          '<button class="btn block" type="submit">Verify &amp; Create Account</button>' +
+        "</form>" +
+        '<div class="row between" style="margin-top:10px"><button type="button" class="link small" data-action="resend-register-otp">Resend OTP</button><button type="button" class="link small" data-action="reset-register">Change email</button></div>' +
+      "</div></div>";
+    return;
+  }
   $("#app").innerHTML =
     '<div class="auth-wrap"><div class="auth-card">' +
       '<h1>Create your account</h1><p class="muted small">Join Aamart for a faster checkout experience.</p>' +
@@ -1099,6 +1113,8 @@ function openAddressModal(address) {
     '<form data-form="address" data-id="' + escapeHtml(a.id || "") + '">' +
       '<div class="field"><label>Full name</label><input class="input" name="name" value="' + escapeHtml(a.name || "") + '" required></div>' +
       '<div class="field"><label>Mobile number</label><input class="input" name="phone" inputmode="numeric" maxlength="10" value="' + escapeHtml(a.phone || "") + '" required></div>' +
+      '<button type="button" class="btn secondary block" data-action="detect-location">Use my current location</button>' +
+      '<p class="muted small" id="geo-status" style="margin:6px 0 10px">We use your location only to fill this address. You can edit it.</p>' +
       '<div class="field"><label>Address line 1</label><input class="input" name="line1" value="' + escapeHtml(a.line1 || "") + '" required placeholder="House no., street, area"></div>' +
       '<div class="field"><label>Address line 2 (optional)</label><input class="input" name="line2" value="' + escapeHtml(a.line2 || "") + '" placeholder="Landmark, apartment"></div>' +
       '<div class="field-row"><div class="field"><label>City</label><input class="input" name="city" value="' + escapeHtml(a.city || "") + '" required></div>' +
@@ -1116,6 +1132,62 @@ function openAddressModal(address) {
    --------------------------------------------------------------------------- */
 async function handleAction(action, el) {
   const id = el.dataset.id;
+
+  if (action === "detect-location") {
+    const form = el.closest("form");
+    if (!form) return;
+    if (!navigator.geolocation) {
+      showToast("Location is not supported by this browser", "error");
+      return;
+    }
+    const status = form.querySelector("#geo-status");
+    const original = el.textContent;
+    el.disabled = true;
+    el.textContent = "Detecting location...";
+    const restore = () => { el.disabled = false; el.textContent = original; };
+    const setField = (name, value) => {
+      if (!value) return;
+      const input = form.elements[name];
+      if (input) input.value = value;
+    };
+    navigator.geolocation.getCurrentPosition(async (pos) => {
+      try {
+        if (status) status.textContent = "Location found. Looking up your address...";
+        const latitude = pos.coords.latitude;
+        const longitude = pos.coords.longitude;
+        const url = "https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=" + encodeURIComponent(latitude) +
+          "&lon=" + encodeURIComponent(longitude) + "&zoom=18&addressdetails=1&accept-language=en";
+        const res = await fetch(url, { headers: { Accept: "application/json" } });
+        if (!res.ok) throw new Error("Could not look up your address. Please fill it manually.");
+        const data = await res.json();
+        const addr = data.address || {};
+        const line1 = [addr.house_number, addr.road || addr.pedestrian || addr.footway || addr.neighbourhood].filter(Boolean).join(", ");
+        const line2 = [addr.suburb, addr.city_district, addr.county].filter(Boolean).join(", ");
+        const city = addr.city || addr.town || addr.village || addr.municipality || addr.county || "";
+        const pincode = String(addr.postcode || "").replace(/\s+/g, "").slice(0, 6);
+        setField("line1", line1 || String(data.display_name || "").split(",").slice(0, 2).join(",").trim());
+        setField("line2", line2);
+        setField("city", city);
+        setField("state", addr.state || "");
+        setField("pincode", pincode);
+        if (status) status.textContent = "Address filled. Please check and edit if needed.";
+        showToast("Address filled from your location", "success");
+      } catch (err) {
+        if (status) status.textContent = "Could not fill the address automatically. Please enter it manually.";
+        showToast(err.message || "Could not detect your address", "error");
+      } finally {
+        restore();
+      }
+    }, (err) => {
+      restore();
+      const message = err.code === 1 ? "Location permission denied. Allow location access and try again."
+        : err.code === 2 ? "Your location is unavailable right now."
+        : "Location request timed out. Please try again.";
+      if (status) status.textContent = "Location not detected. You can enter the address manually.";
+      showToast(message, "error");
+    }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 });
+    return;
+  }
 
   if (action === "wishlist") {
     if (!requireAuth(currentPath())) return;
@@ -1331,6 +1403,22 @@ async function handleAction(action, el) {
     return;
   }
   if (action === "switch-otp") { state.otpMode = "otp"; state.otpSent = false; render(); return; }
+  if (action === "resend-register-otp") {
+    if (!state.otpEmail) return;
+    try {
+      await api("/api/auth/send-otp", { method: "POST", auth: false, body: { email: state.otpEmail } });
+      showToast("Verification OTP resent", "success");
+    } catch (err) {
+      showToast(err.message || "Could not resend OTP", "error");
+    }
+    return;
+  }
+  if (action === "reset-register") {
+    state.registerSent = false;
+    state.otpEmail = "";
+    render();
+    return;
+  }
 }
 
 document.addEventListener("click", (e) => {
@@ -1365,7 +1453,20 @@ document.addEventListener("submit", async (e) => {
 
     if (kind === "login") {
       setBusy(true, "Logging in...");
-      const data = await api("/api/auth/login", { method: "POST", body: { email: fd.get("email"), password: fd.get("password") }, auth: false });
+      let data;
+      try {
+        data = await api("/api/auth/login", { method: "POST", body: { email: fd.get("email"), password: fd.get("password") }, auth: false });
+      } catch (err) {
+        if (err.status === 403) {
+          state.otpMode = "otp";
+          state.otpSent = false;
+          state.otpEmail = String(fd.get("email") || "");
+          showToast(err.message, "error");
+          render();
+          return;
+        }
+        throw err;
+      }
       saveToken(data.token, data.user);
       await afterLogin();
       showToast("Welcome back, " + data.user.name.split(" ")[0] + "!", "success");
@@ -1379,9 +1480,28 @@ document.addEventListener("submit", async (e) => {
         method: "POST", auth: false,
         body: { name: fd.get("name"), email: fd.get("email"), phone: fd.get("phone"), password: fd.get("password") },
       });
+      if (data.pending) {
+        state.otpEmail = String(data.email || fd.get("email") || "");
+        state.registerSent = true;
+        showToast("Verification OTP sent to your email", "success");
+        render();
+        return;
+      }
       saveToken(data.token, data.user);
       await afterLogin();
       showToast("Account created successfully!", "success");
+      go(next && next !== "undefined" ? next : "/");
+      return;
+    }
+
+    if (kind === "register-verify") {
+      setBusy(true, "Verifying...");
+      const data = await api("/api/auth/verify-otp", { method: "POST", auth: false, body: { email: fd.get("email"), otp: fd.get("otp") } });
+      saveToken(data.token, data.user);
+      state.registerSent = false;
+      state.otpEmail = "";
+      await afterLogin();
+      showToast("Email verified. Welcome to Aamart!", "success");
       go(next && next !== "undefined" ? next : "/");
       return;
     }

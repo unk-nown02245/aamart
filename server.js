@@ -133,7 +133,7 @@ const SECURITY_HEADERS = {
   "X-Content-Type-Options": "nosniff",
   "X-Frame-Options": "DENY",
   "Referrer-Policy": "no-referrer",
-  "Permissions-Policy": "geolocation=(), microphone=(), camera=(), payment=()",
+  "Permissions-Policy": "geolocation=(self), microphone=(), camera=(), payment=()",
   "X-XSS-Protection": "0",
   "Cross-Origin-Opener-Policy": "same-origin",
   "Cross-Origin-Resource-Policy": "same-origin",
@@ -149,7 +149,7 @@ const SECURITY_HEADERS = {
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: https:",
     "font-src 'self'",
-    "connect-src 'self'",
+    "connect-src 'self' https://nominatim.openstreetmap.org",
     "manifest-src 'self'",
   ].join("; "),
 };
@@ -310,18 +310,30 @@ function requireAdmin(req, res, roles) {
 }
 
 function sanitizeUser(u) {
-  return { id: u.id, name: u.name, email: u.email, phone: u.phone, role: u.role, createdAt: u.created_at };
+  return {
+    id: u.id,
+    name: u.name,
+    email: u.email,
+    phone: u.phone,
+    role: u.role,
+    emailVerified: Number(u.email_verified == null ? 1 : u.email_verified) === 1,
+    createdAt: u.created_at,
+  };
 }
 
-async function deliverOtp(email, code, reset) {
+async function deliverOtp(email, code, reset, purpose) {
+  const isVerify = purpose === "register";
+  const label = isVerify ? "verification" : reset ? "password reset" : "login";
   if (otpDebugEnabled()) {
-    console.log("[AAMART][OTP DEBUG] " + (reset ? "Password reset" : "Login") + " OTP for " + email + " -> " + code);
+    console.log("[AAMART][OTP DEBUG] " + label + " OTP for " + email + " -> " + code);
   }
   if (!emailConfigured()) return { ok: otpDebugEnabled() };
+  const subject = isVerify ? "Verify your Aamart email" : reset ? "Aamart password reset code" : "Aamart login code";
+  const intro = isVerify ? "Your Aamart verification code is " : reset ? "Your Aamart password reset code is " : "Your Aamart login code is ";
   const result = await sendMail({
     to: email,
-    subject: reset ? "Aamart password reset code" : "Aamart login code",
-    text: (reset ? "Your Aamart password reset code is " : "Your Aamart login code is ") + code +
+    subject,
+    text: intro + code +
       ". It expires in " + (reset ? "10" : "5") + " minutes. If you did not request this, ignore this email.",
   });
   if (!result.ok) console.error("[AAMART] OTP email failed for " + email + ": " + result.error);
@@ -834,15 +846,30 @@ async function handleApi(req, res, pathname, parsed) {
     if (!isPhone(phone)) return fail(res, 400, "Please enter a valid 10-digit mobile number");
     const passwordError = validatePassword(password);
     if (passwordError) return fail(res, 400, passwordError);
-    if (db.prepare("SELECT id FROM users WHERE email = ?").get(email)) return fail(res, 409, "This email is already registered. Please login.");
-    const id = randomId("usr");
+    const existing = db.prepare("SELECT * FROM users WHERE email = ?").get(email);
+    if (existing && Number(existing.email_verified) !== 0) return fail(res, 409, "This email is already registered. Please login.");
     const at = nowIso();
-    db.prepare("INSERT INTO users(id, name, email, phone, password_hash, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'customer', ?, ?)")
-      .run(id, name, email, phone, hashPassword(password), at, at);
+    let id = existing ? existing.id : randomId("usr");
+    if (existing) {
+      db.prepare("UPDATE users SET name = ?, phone = ?, password_hash = ?, updated_at = ? WHERE id = ?")
+        .run(name, phone, hashPassword(password), at, id);
+    } else {
+      db.prepare("INSERT INTO users(id, name, email, phone, password_hash, email_verified, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 0, 'customer', ?, ?)")
+        .run(id, name, email, phone, hashPassword(password), at, at);
+    }
     const user = db.prepare("SELECT * FROM users WHERE id = ?").get(id);
-    const token = tokens.sign({ id, role: "customer", kind: "customer", tv: 0 });
-    logActivity(db, { actor: email, role: "customer", action: "register", ip });
-    return json(res, { token, user: sanitizeUser(user) }, 201);
+    if (!emailConfigured() && !otpDebugEnabled()) {
+      db.prepare("UPDATE users SET email_verified = 1, updated_at = ? WHERE id = ?").run(nowIso(), id);
+      const token = tokens.sign({ id, role: "customer", kind: "customer", tv: Number(user.token_version || 0) });
+      logActivity(db, { actor: email, role: "customer", action: "register", ip });
+      return json(res, { token, user: sanitizeUser(db.prepare("SELECT * FROM users WHERE id = ?").get(id)) }, 201);
+    }
+    const code = otp();
+    otpStore.set(email, { hash: hashOtp(SECRET, email, code), expires: Date.now() + OTP_TTL_MS, attempts: 0, reset: false, register: true });
+    const sent = await deliverOtp(email, code, false, "register");
+    if (!sent.ok) return fail(res, 502, "Could not send the verification email. Please try again.");
+    logActivity(db, { actor: email, role: "customer", action: "register_pending", ip });
+    return json(res, { pending: true, email, expiresIn: Math.floor(OTP_TTL_MS / 1000), message: "Verification OTP sent." }, 201);
   }
 
   if (seg[1] === "auth" && seg[2] === "login" && method === "POST") {
@@ -854,6 +881,7 @@ async function handleApi(req, res, pathname, parsed) {
     const user = db.prepare("SELECT * FROM users WHERE email = ?").get(email);
     const ok = verifyPassword(password, user ? user.password_hash : DUMMY_HASH);
     if (!user || !ok) return fail(res, 401, "Invalid email or password");
+    if (Number(user.email_verified) === 0) return fail(res, 403, "Please verify your email first. Use Login with OTP to verify.");
     const token = tokens.sign({ id: user.id, role: "customer", kind: "customer", tv: Number(user.token_version || 0) });
     logActivity(db, { actor: user.email, role: "customer", action: "login", ip });
     return json(res, { token, user: sanitizeUser(user) });
@@ -910,11 +938,11 @@ async function handleApi(req, res, pathname, parsed) {
     if (!rateLimit("otp-email:" + ip + ":" + email, 3, 10 * 60 * 1000)) return fail(res, 429, "Too many OTP requests. Try later.");
     if (Date.now() - (lastOtpSent.get("login:" + email) || 0) < 30 * 1000) return fail(res, 429, "Please wait 30 seconds before requesting a new OTP");
     lastOtpSent.set("login:" + email, Date.now());
-    const user = db.prepare("SELECT id FROM users WHERE email = ?").get(email);
+    const user = db.prepare("SELECT id, email_verified FROM users WHERE email = ?").get(email);
     if (user) {
       const code = otp();
       otpStore.set(email, { hash: hashOtp(SECRET, email, code), expires: Date.now() + OTP_TTL_MS, attempts: 0, reset: false });
-      await deliverOtp(email, code, false);
+      await deliverOtp(email, code, false, Number(user.email_verified) === 0 ? "register" : undefined);
     }
     return json(res, { sent: true, expiresIn: Math.floor(OTP_TTL_MS / 1000), message: "If an account exists, an OTP has been sent." });
   }
@@ -934,9 +962,13 @@ async function handleApi(req, res, pathname, parsed) {
     otpStore.delete(email);
     const user = db.prepare("SELECT * FROM users WHERE email = ?").get(email);
     if (!user) return fail(res, 400, "OTP was not requested or has expired");
-    const token = tokens.sign({ id: user.id, role: "customer", kind: "customer", tv: Number(user.token_version || 0) });
-    logActivity(db, { actor: user.email, role: "customer", action: "otp_login", ip });
-    return json(res, { token, user: sanitizeUser(user) });
+    if (Number(user.email_verified) === 0) {
+      db.prepare("UPDATE users SET email_verified = 1, updated_at = ? WHERE id = ?").run(nowIso(), user.id);
+    }
+    const fresh = db.prepare("SELECT * FROM users WHERE email = ?").get(email);
+    const token = tokens.sign({ id: fresh.id, role: "customer", kind: "customer", tv: Number(fresh.token_version || 0) });
+    logActivity(db, { actor: fresh.email, role: "customer", action: rec.register ? "email_verified" : "otp_login", ip });
+    return json(res, { token, user: sanitizeUser(fresh) });
   }
 
   if (seg[1] === "auth" && seg[2] === "forgot-password" && method === "POST") {
@@ -971,7 +1003,7 @@ async function handleApi(req, res, pathname, parsed) {
     otpStore.delete(email);
     const user = db.prepare("SELECT id FROM users WHERE email = ?").get(email);
     if (!user) return fail(res, 404, "Account not found");
-    db.prepare("UPDATE users SET password_hash = ?, token_version = token_version + 1, updated_at = ? WHERE id = ?")
+    db.prepare("UPDATE users SET password_hash = ?, email_verified = 1, token_version = token_version + 1, updated_at = ? WHERE id = ?")
       .run(hashPassword(String(body.password)), nowIso(), user.id);
     logActivity(db, { actor: email, role: "customer", action: "password_reset", ip });
     return json(res, { reset: true });
