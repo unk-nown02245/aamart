@@ -598,10 +598,6 @@ function activeFilterChips(filterData, draft) {
     const option = (group.options || []).filter((o) => String(o.id || o.value) === String(id))[0];
     return option ? option.name : id;
   };
-  if (draft.q) {
-    const next = { ...draft, q: "" };
-    chips.push('<a class="chip" href="' + draftHref(next) + '">\u2715 "' + escapeHtml(draft.q) + '"</a>');
-  }
   if (draft.category) {
     const next = { ...draft, category: "", sub: "" };
     chips.push('<a class="chip" href="' + draftHref(next) + '">\u2715 ' + escapeHtml(draft.category) + "</a>");
@@ -773,13 +769,15 @@ async function renderProducts(token, route) {
     ["popularity", "Popularity"], ["price-asc", "Price: Low to High"], ["price-desc", "Price: High to Low"],
     ["newest", "Newest First"], ["discount", "Discount"], ["rating", "Rating"],
   ].map(([v, l]) => '<option value="' + v + '"' + (sortValue === v ? " selected" : "") + ">" + l + "</option>").join("");
-  const title = q.q ? 'Search results for "' + escapeHtml(q.q) + '"' : (q.category ? escapeHtml(q.category) : "All Products");
+  const title = q.category ? escapeHtml(q.category) : "All Products";
+  const pageIntro = q.q ? "" :
+    '<div class="crumbs"><a href="#/">Home</a> \u203A ' + title + "</div>" +
+    '<div class="page-head"><h1>' + title + '</h1><span class="muted small">' + data.total + " products</span></div>";
 
   const html =
-    '<div class="crumbs"><a href="#/">Home</a> \u203A ' + escapeHtml(title) + "</div>" +
-    '<div class="page-head"><h1>' + title + '</h1><span class="muted small">' + data.total + " products</span></div>" +
+    pageIntro +
     '<div class="active-filters">' + chips.join("") + "</div>" +
-    '<div class="listing-tools">' +
+    '<div class="listing-tools' + (q.q ? " search-results-tools" : "") + '">' +
       '<button type="button" class="btn secondary filter-trigger" data-action="open-filters">\u2699 Filters' + (selectedCount ? ' <span class="filter-badge">' + selectedCount + "</span>" : "") + "</button>" +
       '<label class="sort-inline"><span class="muted small">Sort</span><select class="input" data-quick-sort>' + sortOptions + "</select></label>" +
     "</div>" +
