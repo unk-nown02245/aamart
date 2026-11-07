@@ -2394,9 +2394,20 @@ async function boot() {
   if (year) year.textContent = new Date().getFullYear();
   window.addEventListener("hashchange", render);
   if (!location.hash) location.hash = "#/";
-  state.settings = await api("/api/settings", { auth: false }).catch(() => null);
-  if (state.token) await afterLogin();
-  await render();
+  const settingsPromise = api("/api/settings", { auth: false }).then((settings) => {
+    state.settings = settings;
+  }).catch(() => {
+    state.settings = null;
+  });
+  if (state.token) {
+    await Promise.all([settingsPromise, afterLogin()]);
+    await render();
+  } else if (currentPath() === "/") {
+    await Promise.all([settingsPromise, render()]);
+  } else {
+    await settingsPromise;
+    await render();
+  }
 }
 
 boot();

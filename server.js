@@ -31,6 +31,18 @@ const DATA_DIR = path.join(ROOT, "data");
 const UPLOAD_DIR = path.join(ROOT, "uploads");
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
+const ASSET_VERSION = (() => {
+  const files = ["public/app.js", "public/style.css", "public/admin.js", "public/admin.css", "public/admin-login.js"];
+  return crypto.createHash("sha256").update(files.map((rel) => {
+    try {
+      const stat = fs.statSync(path.join(ROOT, rel));
+      return rel + ":" + stat.size + ":" + Math.floor(stat.mtimeMs);
+    } catch {
+      return rel + ":missing";
+    }
+  }).join("|")).digest("hex").slice(0, 10);
+})();
+
 let SECRET;
 let tokens;
 let db;
@@ -157,8 +169,17 @@ const SECURITY_HEADERS = {
 function send(res, status, body, headers) {
   const h = { ...SECURITY_HEADERS, ...(headers || {}) };
   h["Content-Type"] = h["Content-Type"] || "application/json; charset=utf-8";
+  let payload = typeof body === "string" || Buffer.isBuffer(body) ? body : JSON.stringify(body);
+  if (payload == null) payload = "";
+  const accept = String((res.req && res.req.headers && res.req.headers["accept-encoding"]) || "");
+  if (payload.length > 1024 && /\bgzip\b/i.test(accept)) {
+    payload = zlib.gzipSync(payload);
+    h["Content-Encoding"] = "gzip";
+    h["Vary"] = "Accept-Encoding";
+  }
+  h["Content-Length"] = Buffer.byteLength(payload);
   res.writeHead(status, h);
-  res.end(typeof body === "string" || Buffer.isBuffer(body) ? body : JSON.stringify(body));
+  res.end(payload);
 }
 
 function json(res, data, status) {
@@ -213,19 +234,54 @@ function serveFile(res, baseDir, relPath, options) {
     }
     const ext = path.extname(resolved).toLowerCase();
     const isHtml = ext === ".html";
+    const req = res.req || {};
+    const versioned = !isHtml && /[?&]v=/.test(String(req.url || ""));
     const cache = isHtml
       ? { "Cache-Control": "no-store, no-cache, must-revalidate", Pragma: "no-cache", Expires: "0" }
       : [".css", ".js"].includes(ext)
-        ? { "Cache-Control": "public, max-age=300, must-revalidate" }
-        : { "Cache-Control": "public, max-age=86400" };
+        ? versioned
+          ? { "Cache-Control": "public, max-age=31536000, immutable" }
+          : { "Cache-Control": "public, max-age=3600, must-revalidate" }
+        : { "Cache-Control": "public, max-age=604800, stale-while-revalidate=86400" };
     const compressible = [".html", ".css", ".js", ".json", ".svg", ".txt", ".xml", ".webmanifest"].includes(ext);
-    const accept = String((res.req && res.req.headers && res.req.headers["accept-encoding"]) || "");
+    const accept = String((req.headers && req.headers["accept-encoding"]) || "");
     const useGzip = compressible && /\bgzip\b/i.test(accept) && stat.size > 1024;
+    const etag = '"' + stat.size.toString(16) + "-" + Math.floor(stat.mtimeMs).toString(16) + '"';
+    if (!isHtml) {
+      const inm = String((req.headers && req.headers["if-none-match"]) || "");
+      const ims = Date.parse(String((req.headers && req.headers["if-modified-since"]) || ""));
+      const notModified = (inm && inm.split(",").map((v) => v.trim()).indexOf(etag) >= 0) ||
+        (!inm && Number.isFinite(ims) && Math.floor(stat.mtimeMs / 1000) * 1000 <= ims);
+      if (notModified) {
+        res.writeHead(304, { ...SECURITY_HEADERS, ...cache, ETag: etag });
+        return res.end();
+      }
+    }
     const headers = {
       ...SECURITY_HEADERS,
       "Content-Type": MIME[ext] || "application/octet-stream",
       ...cache,
     };
+    if (!isHtml) headers.ETag = etag;
+    if (isHtml) {
+      fs.readFile(resolved, "utf8", (err, html) => {
+        if (err) return fail(res, 500, "Could not read file");
+        const body = Buffer.from(html.replace(/__ASSET_VERSION__/g, ASSET_VERSION));
+        if (useGzip) {
+          const compressed = zlib.gzipSync(body);
+          headers["Content-Encoding"] = "gzip";
+          headers["Vary"] = "Accept-Encoding";
+          headers["Content-Length"] = compressed.length;
+          res.writeHead(opts.status || 200, headers);
+          res.end(compressed);
+        } else {
+          headers["Content-Length"] = body.length;
+          res.writeHead(opts.status || 200, headers);
+          res.end(body);
+        }
+      });
+      return;
+    }
     if (useGzip) {
       headers["Content-Encoding"] = "gzip";
       headers["Vary"] = "Accept-Encoding";
