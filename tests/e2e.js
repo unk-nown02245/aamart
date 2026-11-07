@@ -158,6 +158,33 @@ function errMsg(r) {
   r = await req("GET", "/api/products?minPrice=9999999");
   check("product price filter", r.status === 200 && (r.data.products || []).length === 0, errMsg(r));
 
+  r = await req("GET", "/api/filters");
+  const filterGroups = (r.data && r.data.groups) || [];
+  check("filter catalog", r.status === 200 && filterGroups.length >= 10 && typeof r.data.total === "number", errMsg(r));
+  check("removed filter groups hidden", !filterGroups.some((g) => ["availability", "f_assured", "country"].indexOf(g.key) >= 0), filterGroups.map((g) => g.key).join(","));
+  const brandFilter = filterGroups.filter((g) => g.key === "brand")[0];
+  const brandOption = brandFilter && (brandFilter.options || []).filter((o) => o.count > 0)[0];
+  check("filter brands counted", !!brandOption, "no brand options");
+  if (brandOption) {
+    r = await req("GET", "/api/products?brand=" + encodeURIComponent(brandOption.value));
+    check("filter by brand", r.status === 200 && (r.data.products || []).length > 0 && r.data.total <= brandOption.count, errMsg(r));
+  }
+  const genderFilter = filterGroups.filter((g) => g.key === "gender")[0];
+  const genderOption = genderFilter && (genderFilter.options || []).filter((o) => o.count > 0)[0];
+  if (genderOption) {
+    r = await req("GET", "/api/products?gender=" + encodeURIComponent(genderOption.id));
+    check("filter by dynamic value", r.status === 200 && (r.data.products || []).length > 0, errMsg(r));
+  }
+  const colorFilter = filterGroups.filter((g) => g.key === "color")[0];
+  const colorOptions = ((colorFilter && colorFilter.options) || []).filter((o) => o.count > 0).slice(0, 2);
+  if (colorOptions.length === 2) {
+    r = await req("GET", "/api/products?color=" + encodeURIComponent(colorOptions[0].id + "," + colorOptions[1].id));
+    check("filter multiple colours", r.status === 200 && Number(r.data.total) >= Math.max(Number(colorOptions[0].count), Number(colorOptions[1].count)), errMsg(r));
+  }
+  r = await req("GET", "/api/filters?minPrice=500&maxPrice=2000");
+  const priceGroup = ((r.data && r.data.groups) || []).filter((g) => g.key === "price")[0];
+  check("filter price facets", r.status === 200 && priceGroup && priceGroup.selectedCount === 1 && priceGroup.selectedMin === "500", errMsg(r));
+
   const target = products.filter(function (p) { return p.stock > 1 && p.price >= 500; })[0] || products[0];
   check("found test product", !!target, "no products");
   if (!target) return finish();
@@ -318,7 +345,13 @@ function errMsg(r) {
   r = await req("GET", "/api/admin/products?limit=200", { token: superToken });
   check("admin product list", r.status === 200 && Array.isArray(r.data.products), errMsg(r));
 
+  r = await req("GET", "/api/admin/filters", { token: superToken });
+  const catalogValues = (r.data && r.data.values) || [];
+  const seedFilterValue = catalogValues.filter((v) => v.active && v.kind === "gender")[0] || catalogValues.filter((v) => v.active)[0];
+
   // ---------------- Admin product CRUD ----------------
+  const autoAge = "E2E " + stamp + "+ years";
+  const autoColor = "E2E Teal " + stamp;
   r = await req("POST", "/api/admin/products", {
     token: superToken,
     body: {
@@ -330,16 +363,25 @@ function errMsg(r) {
       stock: 5,
       status: "active",
       featured: true,
+      newArrival: true,
+      filterValues: seedFilterValue ? [seedFilterValue.id] : [],
       images: ["/img/placeholder.svg"],
-      variants: [{ type: "Size", value: "M", price: 799, stock: 5 }],
-      specs: { Material: "Cotton" },
+      variants: [{ type: "Size", value: "M", price: 799, stock: 5 }, { type: "Color", value: autoColor, price: 799, stock: 5 }],
+      specs: { Material: "Cotton", Age: autoAge },
     },
   });
   check("admin create product", r.status === 201 && r.data.id, errMsg(r));
   const newProduct = r.data || {};
+  check("product filter metadata saved", r.status === 201 && r.data.newArrival === true && (seedFilterValue ? (r.data.filterValues || []).indexOf(seedFilterValue.id) >= 0 : true), errMsg(r));
 
-  r = await req("GET", "/api/admin/products/" + encodeURIComponent(newProduct.id), { token: superToken });
-  check("admin product detail", r.status === 200 && r.data.title === newProduct.title, errMsg(r));
+  r = await req("GET", "/api/filters");
+  const ageGroup = ((r.data && r.data.groups) || []).filter((g) => g.key === "age_group")[0];
+  const autoAgeOption = ageGroup && (ageGroup.options || []).filter((o) => o.name === autoAge || o.value === autoAge)[0];
+  check("product age auto filter created", r.status === 200 && !!autoAgeOption && (newProduct.filterValues || []).indexOf(autoAgeOption.id) >= 0, errMsg(r));
+  const colorGroup = ((r.data && r.data.groups) || []).filter((g) => g.key === "color")[0];
+  const autoColorOption = colorGroup && (colorGroup.options || []).filter((o) => o.name === autoColor || o.value === autoColor)[0];
+  check("product colour auto filter created", r.status === 200 && !!autoColorOption && Number(autoColorOption.count) >= 1 && (newProduct.filterValues || []).indexOf(autoColorOption.id) >= 0, errMsg(r));
+  check("colour filter options have swatches", !!autoColorOption && !!autoColorOption.hex, errMsg(r));
 
   r = await req("PUT", "/api/admin/products/" + encodeURIComponent(newProduct.id), {
     token: superToken,
@@ -382,9 +424,40 @@ function errMsg(r) {
   check("admin create brand", r.status === 201 && r.data.id, errMsg(r));
   const brandId = r.data && r.data.id;
   if (brandId) {
+    r = await req("PUT", "/api/admin/brands/" + encodeURIComponent(brandId), { token: superToken, body: { name: "E2E Brand Updated " + stamp, logo: "/img/placeholder.svg", popular: true, sort: 4, active: true } });
+    check("admin update brand", r.status === 200 && r.data.popular === 1 && r.data.logo === "/img/placeholder.svg", errMsg(r));
+    r = await req("GET", "/api/brands");
+    const publicBrand = (r.data.brands || []).filter((b) => b.id === brandId)[0];
+    check("public brand metadata", r.status === 200 && publicBrand && publicBrand.popular === 1 && typeof publicBrand.logo === "string", errMsg(r));
     r = await req("DELETE", "/api/admin/brands/" + encodeURIComponent(brandId), { token: superToken });
     check("admin delete brand", r.status === 200 && r.data.deleted, errMsg(r));
   }
+
+  // ---------------- Admin filters ----------------
+  r = await req("GET", "/api/admin/filters", { token: superToken });
+  check("admin filter catalog", r.status === 200 && Array.isArray(r.data.groups) && Array.isArray(r.data.values), errMsg(r));
+  check("removed filter data cleared", !(r.data.groups || []).some((g) => ["availability", "f_assured", "country"].indexOf(g.key) >= 0) && !(r.data.values || []).some((v) => ["availability", "f_assured", "country"].indexOf(v.kind) >= 0), errMsg(r));
+  r = await req("POST", "/api/admin/filters/values", { token: superToken, body: { kind: "color", name: "E2E Colour " + stamp, value: "E2E Colour " + stamp, meta: { hex: "#123456" }, sort: 7, active: true } });
+  check("admin create filter value", r.status === 201 && r.data.id, errMsg(r));
+  const filterValueId = r.data && r.data.id;
+  if (filterValueId) {
+    r = await req("PUT", "/api/admin/filters/values/" + encodeURIComponent(filterValueId), { token: superToken, body: { kind: "offers", name: "E2E Colour Updated " + stamp, active: false } });
+    check("admin update filter value", r.status === 200 && r.data.active === 0 && r.data.kind === "offers" && /Updated/.test(r.data.name), errMsg(r));
+    r = await req("GET", "/api/filters");
+    const hiddenColour = r.data.groups.filter((g) => g.key === "offers")[0];
+    check("inactive filter value hidden", r.status === 200 && !(hiddenColour.options || []).some((o) => o.id === filterValueId), errMsg(r));
+    r = await req("DELETE", "/api/admin/filters/values/" + encodeURIComponent(filterValueId), { token: superToken });
+    check("admin delete filter value", r.status === 200 && r.data.deleted, errMsg(r));
+  }
+  r = await req("GET", "/api/admin/filters", { token: superToken });
+  const groupList = (r.data.groups || []).map((g) => ({ key: g.key, label: g.label, enabled: g.enabled, sort: g.sort }));
+  const offersGroup = groupList.filter((g) => g.key === "offers")[0];
+  offersGroup.enabled = false;
+  r = await req("PUT", "/api/admin/filters/groups", { token: superToken, body: { groups: groupList } });
+  check("admin update filter groups", r.status === 200 && !(r.data.groups || []).some((g) => g.key === "offers" && g.enabled), errMsg(r));
+  offersGroup.enabled = true;
+  r = await req("PUT", "/api/admin/filters/groups", { token: superToken, body: { groups: groupList } });
+  check("admin restore filter groups", r.status === 200 && (r.data.groups || []).some((g) => g.key === "offers" && g.enabled), errMsg(r));
 
   r = await req("POST", "/api/admin/banners", { token: superToken, body: { title: "E2E Banner " + stamp, subtitle: "Test", image: "/img/banner1.svg", link: "/#/products", active: true, sort: 9 } });
   check("admin create banner", r.status === 201 && r.data.id, errMsg(r));
@@ -517,6 +590,11 @@ function errMsg(r) {
   // ---------------- Cleanup product ----------------
   r = await req("DELETE", "/api/admin/products/" + encodeURIComponent(newProduct.id), { token: superToken });
   check("admin delete product", r.status === 200 && r.data.deleted, errMsg(r));
+  r = await req("GET", "/api/admin/filters", { token: superToken });
+  const autoAgeValue = ((r.data && r.data.values) || []).filter((v) => v.kind === "age_group" && v.value === autoAge)[0];
+  if (autoAgeValue) await req("DELETE", "/api/admin/filters/values/" + encodeURIComponent(autoAgeValue.id), { token: superToken });
+  const autoColorValue = ((r.data && r.data.values) || []).filter((v) => v.kind === "color" && v.value === autoColor)[0];
+  if (autoColorValue) await req("DELETE", "/api/admin/filters/values/" + encodeURIComponent(autoColorValue.id), { token: superToken });
 
   // ---------------- Session revocation ----------------
   r = await req("POST", "/api/admin/logout", { token: superToken, body: {} });

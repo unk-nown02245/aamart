@@ -6,7 +6,7 @@ const path = require("path");
 const crypto = require("crypto");
 const zlib = require("zlib");
 
-const { openDatabase, jsonParse, logActivity } = require("./lib/db");
+const { openDatabase, jsonParse, logActivity, colourMeta } = require("./lib/db");
 const {
   loadSecret,
   hashPassword,
@@ -397,6 +397,12 @@ function serializeProduct(row, adminView) {
   const brand = row.brand_id ? db.prepare("SELECT * FROM brands WHERE id = ?").get(row.brand_id) : null;
   const images = productImages(row.id);
   const variants = db.prepare("SELECT id, type, value, price, stock FROM product_variants WHERE product_id = ?").all(row.id);
+  const productFilters = db.prepare("SELECT fv.id, fv.kind, fv.name, fv.value FROM product_filter_values pfv JOIN filter_values fv ON fv.id = pfv.value_id WHERE pfv.product_id = ?").all(row.id);
+  const filterMap = {};
+  productFilters.forEach((fv) => {
+    if (!filterMap[fv.kind]) filterMap[fv.kind] = [];
+    filterMap[fv.kind].push(fv.id);
+  });
   return {
     id: row.id,
     title: row.title,
@@ -417,16 +423,60 @@ function serializeProduct(row, adminView) {
     sku: row.sku,
     status: row.status,
     featured: !!row.featured,
+    fAssured: !!row.f_assured,
+    newArrival: !!row.new_arrival,
     rating: row.rating,
     ratingCount: row.rating_count,
     specs: jsonParse(row.specs, {}),
     variants,
     images,
     image: images[0],
+    filterValues: productFilters.map((fv) => fv.id),
+    filters: filterMap,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     ...(adminView ? { categoryName: category ? category.name : "", subcategoryName: sub ? sub.name : "", brandName: brand ? brand.name : "" } : {}),
   };
+}
+
+const FILTER_KINDS = ["gender", "color", "size", "age_group", "country", "offers"];
+
+function parseList(value) {
+  if (Array.isArray(value)) return value.map((v) => String(v).trim()).filter(Boolean);
+  return String(value == null ? "" : value).split(",").map((v) => v.trim()).filter(Boolean);
+}
+
+function categoryLookup(value) {
+  if (!value) return null;
+  const key = String(value).toLowerCase();
+  return db.prepare("SELECT id, name, parent_id FROM categories WHERE id = ? OR LOWER(slug) = ? OR LOWER(name) = ?").get(value, key, key) || null;
+}
+
+function filterValueIds(kind, tokens, categoryId, categoryIdScope) {
+  const ids = [];
+  const scope = categoryId || "";
+  const parentScope = categoryIdScope || "";
+  const select = db.prepare("SELECT id FROM filter_values WHERE kind = ? AND active = 1 AND (id = ? OR LOWER(value) = ? OR LOWER(name) = ?) AND (category_id = '' OR category_id = ? OR category_id = ?) LIMIT 1");
+  parseList(tokens).forEach((token) => {
+    const key = token.toLowerCase();
+    const row = select.get(kind, token, key, key, scope, parentScope);
+    if (row && ids.indexOf(row.id) < 0) ids.push(row.id);
+  });
+  return ids;
+}
+
+function addFilterKindWhere(where, params, kind, tokens, categoryId, parentCategoryId, excludeKind) {
+  if (excludeKind === kind) return;
+  const list = parseList(tokens);
+  if (!list.length) return;
+  const ids = filterValueIds(kind, list, categoryId, parentCategoryId);
+  if (!ids.length) {
+    where.push("0 = 1");
+    return;
+  }
+  where.push("EXISTS (SELECT 1 FROM product_filter_values pfv WHERE pfv.product_id = products.id AND pfv.kind = ? AND pfv.value_id IN (" +
+    ids.map(() => "?").join(",") + "))");
+  params.push(kind, ...ids);
 }
 
 function productList(filters) {
@@ -443,9 +493,10 @@ function productList(filters) {
     where.push("(LOWER(title) LIKE ? OR LOWER(description) LIKE ? OR LOWER(sku) LIKE ? OR LOWER(slug) LIKE ?)");
     params.push(like, like, like, like);
   }
+  const scopeCategory = categoryLookup(f.category) || categoryLookup(f.sub);
+  const parentCategoryId = scopeCategory && scopeCategory.parent_id ? scopeCategory.parent_id : (scopeCategory ? scopeCategory.id : "");
   if (f.category) {
-    const key = String(f.category).toLowerCase();
-    const cat = db.prepare("SELECT id FROM categories WHERE id = ? OR LOWER(slug) = ? OR LOWER(name) = ?").get(f.category, key, key);
+    const cat = categoryLookup(f.category);
     if (cat) {
       const ids = [cat.id].concat(db.prepare("SELECT id FROM categories WHERE parent_id = ?").all(cat.id).map((r) => r.id));
       where.push("category_id IN (" + ids.map(() => "?").join(",") + ")");
@@ -453,18 +504,23 @@ function productList(filters) {
     }
   }
   if (f.sub) {
-    const key = String(f.sub).toLowerCase();
-    const sub = db.prepare("SELECT id FROM categories WHERE id = ? OR LOWER(slug) = ? OR LOWER(name) = ?").get(f.sub, key, key);
+    const sub = categoryLookup(f.sub);
     if (sub) {
       where.push("subcategory_id = ?");
       params.push(sub.id);
     }
   }
   if (f.brand) {
-    const b = db.prepare("SELECT id FROM brands WHERE id = ? OR LOWER(name) = ?").get(f.brand, String(f.brand).toLowerCase());
-    if (b) {
-      where.push("brand_id = ?");
-      params.push(b.id);
+    const brandTokens = parseList(f.brand);
+    const brandIds = [];
+    const findBrand = db.prepare("SELECT id FROM brands WHERE id = ? OR LOWER(name) = ? OR LOWER(slug) = ? LIMIT 1");
+    brandTokens.forEach((token) => {
+      const b = findBrand.get(token, token.toLowerCase(), token.toLowerCase());
+      if (b && brandIds.indexOf(b.id) < 0) brandIds.push(b.id);
+    });
+    if (brandIds.length) {
+      where.push("brand_id IN (" + brandIds.map(() => "?").join(",") + ")");
+      params.push(...brandIds);
     }
   }
   if (f.minPrice != null && f.minPrice !== "") {
@@ -486,6 +542,11 @@ function productList(filters) {
   if (f.availability === "in") where.push("stock > 0");
   if (f.availability === "out") where.push("stock <= 0");
   if (f.featured) where.push("featured = 1");
+  if (f.fAssured) where.push("f_assured = 1");
+  if (f.newArrival) where.push("new_arrival = 1");
+  FILTER_KINDS.forEach((kind) => {
+    addFilterKindWhere(where, params, kind, f[kind], scopeCategory ? scopeCategory.id : "", parentCategoryId, f.excludeKind);
+  });
 
   const order = {
     "price-asc": "price ASC",
@@ -505,6 +566,190 @@ function productList(filters) {
   const total = db.prepare("SELECT COUNT(*) AS c FROM products" + whereSql).get(...params).c;
   const rows = db.prepare("SELECT * FROM products" + whereSql + " ORDER BY " + order + " LIMIT ? OFFSET ?").all(...params, limit, offset);
   return { products: rows.map((r) => serializeProduct(r, f.adminView)), total };
+}
+
+function filterParamsFromSearch(searchParams) {
+  return {
+    q: searchParams.get("q") || "",
+    category: searchParams.get("category") || "",
+    sub: searchParams.get("sub") || "",
+    brand: searchParams.get("brand") || "",
+    gender: searchParams.get("gender") || "",
+    color: searchParams.get("color") || "",
+    size: searchParams.get("size") || "",
+    age_group: searchParams.get("age_group") || "",
+    country: searchParams.get("country") || "",
+    offers: searchParams.get("offers") || "",
+    minPrice: searchParams.get("minPrice"),
+    maxPrice: searchParams.get("maxPrice"),
+    rating: searchParams.get("rating"),
+    minDiscount: searchParams.get("discount"),
+    availability: searchParams.get("availability") || "",
+    fAssured: searchParams.get("fAssured") === "1" || searchParams.get("f_assured") === "1",
+    newArrival: searchParams.get("newArrival") === "1" || searchParams.get("new_arrivals") === "1",
+    sort: searchParams.get("sort") || "",
+  };
+}
+
+function filterCount(base) {
+  return productList({ ...base, limit: 1, page: 1 }).total;
+}
+
+function selectedToken(parsed, key, option) {
+  return parseList(parsed[key]).some((token) => {
+    const t = token.toLowerCase();
+    return t === String(option.id || "").toLowerCase() || t === String(option.value || "").toLowerCase() || t === String(option.name || "").toLowerCase();
+  });
+}
+
+function filterCatalog(searchParams) {
+  const parsed = filterParamsFromSearch(searchParams);
+  const groups = db.prepare("SELECT * FROM filter_groups WHERE enabled = 1 ORDER BY sort ASC").all();
+  const scope = categoryLookup(parsed.category) || categoryLookup(parsed.sub);
+  const scopeId = scope ? scope.id : "";
+  const parentId = scope && scope.parent_id ? scope.parent_id : scopeId;
+  const valueRows = db.prepare("SELECT * FROM filter_values WHERE active = 1 AND (category_id = '' OR category_id = ? OR category_id = ?) ORDER BY sort ASC, name ASC").all(scopeId, parentId);
+  const byKind = {};
+  valueRows.forEach((row) => {
+    if (!byKind[row.kind]) byKind[row.kind] = [];
+    byKind[row.kind].push(row);
+  });
+
+  const base = { ...parsed };
+  const total = filterCount(base);
+  const result = [];
+
+  groups.forEach((group) => {
+    const key = group.key;
+    const item = { key, label: group.label, type: group.type, selectedCount: 0, options: [] };
+    if (key === "sort") {
+      item.options = [
+        { value: "popularity", name: "Popularity" },
+        { value: "price-asc", name: "Price: Low to High" },
+        { value: "price-desc", name: "Price: High to Low" },
+        { value: "newest", name: "Newest First" },
+        { value: "discount", name: "Discount" },
+        { value: "rating", name: "Rating" },
+      ];
+      item.selected = parsed.sort || "popularity";
+      result.push(item);
+      return;
+    }
+    if (key === "brand") {
+      const scoped = { ...base };
+      delete scoped.brand;
+      const brands = db.prepare("SELECT id, name, slug, logo, popular, sort FROM brands WHERE active = 1 ORDER BY popular DESC, sort ASC, name ASC").all();
+      item.options = brands.map((brand) => ({
+        value: brand.id,
+        name: brand.name,
+        logo: brand.logo || "",
+        popular: !!brand.popular,
+        count: filterCount({ ...scoped, brand: brand.id }),
+        selected: selectedToken(parsed, "brand", { id: brand.id, name: brand.name }),
+      }));
+      item.selectedCount = item.options.filter((o) => o.selected).length;
+      result.push(item);
+      return;
+    }
+    if (key === "price") {
+      const scoped = { ...base };
+      delete scoped.minPrice;
+      delete scoped.maxPrice;
+      const range = db.prepare("SELECT COALESCE(MIN(price),0) AS min, COALESCE(MAX(price),0) AS max FROM products WHERE status = 'active'").get();
+      const presets = [[0, 499], [500, 999], [1000, 1999], [2000, 4999], [5000, 9999], [10000, null]];
+      item.min = Math.floor(Number(range.min) || 0);
+      item.max = Math.ceil(Number(range.max) || 0);
+      item.options = presets.map(([min, max]) => ({
+        value: max == null ? "min:" + min : "min:" + min + ",max:" + max,
+        min,
+        max,
+        name: max == null ? "\u20B9" + min + "+" : "\u20B9" + min + " \u2013 \u20B9" + max,
+        count: filterCount({ ...scoped, minPrice: min, maxPrice: max == null ? "" : max }),
+        selected: String(parsed.minPrice || "") === String(min) && String(parsed.maxPrice || "") === String(max == null ? "" : max),
+      }));
+      item.selectedMin = parsed.minPrice;
+      item.selectedMax = parsed.maxPrice;
+      item.selectedCount = parsed.minPrice || parsed.maxPrice ? 1 : 0;
+      result.push(item);
+      return;
+    }
+    if (key === "rating") {
+      const scoped = { ...base };
+      delete scoped.rating;
+      item.options = [4, 3, 2].map((rating) => ({
+        value: rating,
+        name: rating + "\u2605 & above",
+        count: filterCount({ ...scoped, rating }),
+        selected: String(parsed.rating || "") === String(rating),
+      }));
+      item.selectedCount = parsed.rating ? 1 : 0;
+      result.push(item);
+      return;
+    }
+    if (key === "discount") {
+      const scoped = { ...base };
+      delete scoped.minDiscount;
+      item.options = [10, 20, 30, 50].map((discount) => ({
+        value: discount,
+        name: discount + "% or more",
+        count: filterCount({ ...scoped, minDiscount: discount }),
+        selected: String(parsed.minDiscount || "") === String(discount),
+      }));
+      item.selectedCount = parsed.minDiscount ? 1 : 0;
+      result.push(item);
+      return;
+    }
+    if (key === "availability") {
+      const scoped = { ...base };
+      delete scoped.availability;
+      item.options = [
+        { value: "in", name: "In stock", count: filterCount({ ...scoped, availability: "in" }), selected: parsed.availability === "in" },
+        { value: "out", name: "Out of stock", count: filterCount({ ...scoped, availability: "out" }), selected: parsed.availability === "out" },
+      ];
+      item.selectedCount = parsed.availability ? 1 : 0;
+      result.push(item);
+      return;
+    }
+    if (key === "f_assured" || key === "new_arrivals") {
+      const field = key === "f_assured" ? "fAssured" : "newArrival";
+      const scoped = { ...base };
+      scoped[field] = false;
+      item.options = [{
+        value: "1",
+        name: key === "f_assured" ? "F-Assured products" : "New arrivals",
+        count: filterCount({ ...scoped, [field]: true }),
+        selected: !!parsed[field],
+      }];
+      item.selectedCount = parsed[field] ? 1 : 0;
+      result.push(item);
+      return;
+    }
+    if (FILTER_KINDS.indexOf(key) >= 0) {
+      const scoped = { ...base };
+      delete scoped[key];
+      scoped.excludeKind = key;
+      item.options = (byKind[key] || []).map((value) => {
+        const meta = jsonParse(value.meta, {});
+        const optionBase = { ...scoped };
+        delete optionBase.excludeKind;
+        optionBase[key] = value.id;
+        return {
+          value: value.value,
+          id: value.id,
+          name: value.name,
+          hex: meta.hex || "",
+          count: filterCount(optionBase),
+          selected: selectedToken(parsed, key, value),
+        };
+      });
+      item.selectedCount = item.options.filter((o) => o.selected).length;
+      result.push(item);
+      return;
+    }
+    result.push(item);
+  });
+
+  return { total, groups: result, selected: parsed };
 }
 
 function categoryTree(includeEmpty) {
@@ -721,6 +966,10 @@ function buildProduct(body, existing) {
   }
   const status = body && body.status != null ? (body.status === "inactive" ? "inactive" : "active") : (cur.status || "active");
   const featured = body && body.featured != null ? (body.featured ? 1 : 0) : (cur.featured || 0);
+  const fAssured = body && body.fAssured != null ? (body.fAssured ? 1 : 0) : (cur.f_assured || 0);
+  const newArrival = body && body.newArrival != null ? (body.newArrival ? 1 : 0) : (cur.new_arrival || 0);
+  const hasFilterValues = body && Array.isArray(body.filterValues);
+  const filterValues = hasFilterValues ? body.filterValues.map((id) => sanitizeString(id, 80)).filter(Boolean).slice(0, 100) : null;
   const description = body && body.description != null ? sanitizeString(body.description, 5000) : (cur.description || "");
   const sku = body && body.sku != null ? sanitizeString(body.sku, 60) : (cur.sku || "AAM-" + randomCode(8));
   const specs = body && body.specs !== undefined ? normalizeSpecs(body.specs) : jsonParse(cur.specs, {});
@@ -731,7 +980,7 @@ function buildProduct(body, existing) {
     images = body.images.map((u) => sanitizeString(u, 300)).filter((u) => /^\/[A-Za-z0-9_./-]+$/.test(u)).slice(0, 8);
     if (!images.length) images = ["/img/placeholder.svg"];
   }
-  return { title, price, mrp, discount, stock, categoryId: categoryId || null, subcategoryId: subcategoryId || null, brandId: brandId || null, status, featured, description, sku, specs, variants, images };
+  return { title, price, mrp, discount, stock, categoryId: categoryId || null, subcategoryId: subcategoryId || null, brandId: brandId || null, status, featured, fAssured, newArrival, filterValues, description, sku, specs, variants, images };
 }
 
 function uniqueSlug(title, excludeId) {
@@ -763,6 +1012,57 @@ function saveProductVariants(productId, variants) {
     if (!value) return;
     ins.run(randomId("var"), productId, sanitizeString(v.type, 40) || "Option", value,
       safeNumber(v.price, 0) || null, v.stock == null ? null : Math.max(0, clampInt(v.stock, 0, 1000000, 0)));
+  });
+}
+
+function saveProductFilterValues(productId, ids) {
+  db.prepare("DELETE FROM product_filter_values WHERE product_id = ?").run(productId);
+  if (Array.isArray(ids)) {
+    const find = db.prepare("SELECT id, kind FROM filter_values WHERE id = ? AND active = 1");
+    const link = db.prepare("INSERT OR IGNORE INTO product_filter_values(product_id, kind, value_id) VALUES (?, ?, ?)");
+    ids.slice(0, 100).forEach((id) => {
+      const value = find.get(id);
+      if (value) link.run(productId, value.kind, value.id);
+    });
+  }
+  saveProductAutoFilterValues(productId);
+}
+
+function autoFilterValueId(kind, value) {
+  const clean = sanitizeString(value, 60);
+  if (!clean) return null;
+  const find = db.prepare("SELECT id, active FROM filter_values WHERE kind = ? AND value = ? AND category_id = ''");
+  const existing = find.get(kind, clean);
+  if (existing) return existing.active ? existing.id : null;
+  const meta = kind === "color" ? colourMeta(clean) : {};
+  const id = randomId("flt");
+  const at = nowIso();
+  db.prepare("INSERT INTO filter_values(id, kind, name, value, meta, category_id, sort, active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, '', 0, 1, ?, ?)")
+    .run(id, kind, clean, clean, JSON.stringify(meta), at, at);
+  return id;
+}
+
+function saveProductAutoFilterValues(productId) {
+  const row = db.prepare("SELECT specs, variants FROM products WHERE id = ?").get(productId);
+  if (!row) return;
+  const specs = jsonParse(row.specs, {});
+  const variants = jsonParse(row.variants, []);
+  const link = db.prepare("INSERT OR IGNORE INTO product_filter_values(product_id, kind, value_id) VALUES (?, ?, ?)");
+  const linkValue = (kind, value) => {
+    const id = autoFilterValueId(kind, value);
+    if (id) link.run(productId, kind, id);
+  };
+  Object.keys(specs || {}).forEach((key) => {
+    if (!/^(age|age group|recommended age)$/i.test(String(key).trim())) return;
+    linkValue("age_group", specs[key]);
+  });
+  (Array.isArray(variants) ? variants : []).forEach((variant) => {
+    const type = String(variant && variant.type || "").toLowerCase();
+    const value = String(variant && variant.value || "").trim();
+    if (!value) return;
+    if (type.includes("age")) linkValue("age_group", value);
+    else if (type.includes("color") || type.includes("colour")) linkValue("color", value);
+    else if (type.includes("size")) linkValue("size", value);
   });
 }
 
@@ -1015,11 +1315,15 @@ async function handleApi(req, res, pathname, parsed) {
   if (seg[1] === "categories" && method === "GET") return json(res, { categories: categoryTree(false) });
 
   if (seg[1] === "brands" && method === "GET") {
-    return json(res, { brands: db.prepare("SELECT id, name, slug FROM brands WHERE active = 1 ORDER BY name").all() });
+    return json(res, { brands: db.prepare("SELECT id, name, slug, logo, popular, sort FROM brands WHERE active = 1 ORDER BY popular DESC, sort ASC, name ASC").all() });
   }
 
   if (seg[1] === "banners" && method === "GET") {
     return json(res, { banners: db.prepare("SELECT * FROM banners WHERE active = 1 ORDER BY sort ASC").all() });
+  }
+
+  if (seg[1] === "filters" && method === "GET") {
+    return json(res, filterCatalog(parsed.searchParams));
   }
 
   if (seg[1] === "products" && seg.length === 2 && method === "GET") {
@@ -1028,11 +1332,19 @@ async function handleApi(req, res, pathname, parsed) {
       category: parsed.searchParams.get("category") || "",
       sub: parsed.searchParams.get("sub") || "",
       brand: parsed.searchParams.get("brand") || "",
+      gender: parsed.searchParams.get("gender") || "",
+      color: parsed.searchParams.get("color") || "",
+      size: parsed.searchParams.get("size") || "",
+      age_group: parsed.searchParams.get("age_group") || "",
+      country: parsed.searchParams.get("country") || "",
+      offers: parsed.searchParams.get("offers") || "",
       minPrice: parsed.searchParams.get("minPrice"),
       maxPrice: parsed.searchParams.get("maxPrice"),
       rating: parsed.searchParams.get("rating"),
       minDiscount: parsed.searchParams.get("discount"),
       availability: parsed.searchParams.get("availability") || "",
+      fAssured: parsed.searchParams.get("fAssured") === "1" || parsed.searchParams.get("f_assured") === "1",
+      newArrival: parsed.searchParams.get("newArrival") === "1" || parsed.searchParams.get("new_arrivals") === "1",
       sort: parsed.searchParams.get("sort") || "",
       featured: parsed.searchParams.get("featured") === "1",
       limit: parsed.searchParams.get("limit") || 40,
@@ -1428,11 +1740,12 @@ async function handleApi(req, res, pathname, parsed) {
       if (built.error) return fail(res, 400, built.error);
       const id = randomId("prd");
       const at = nowIso();
-      db.prepare(`INSERT INTO products(id, title, slug, description, category_id, subcategory_id, brand_id, price, mrp, discount, stock, sku, status, featured, rating, rating_count, specs, variants, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?)`)
-        .run(id, built.title, uniqueSlug(built.title, null), built.description, built.categoryId, built.subcategoryId, built.brandId, built.price, built.mrp, built.discount, built.stock, built.sku, built.status, built.featured, JSON.stringify(built.specs), JSON.stringify(built.variants), at, at);
+      db.prepare(`INSERT INTO products(id, title, slug, description, category_id, subcategory_id, brand_id, price, mrp, discount, stock, sku, status, featured, f_assured, new_arrival, rating, rating_count, specs, variants, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?)`)
+        .run(id, built.title, uniqueSlug(built.title, null), built.description, built.categoryId, built.subcategoryId, built.brandId, built.price, built.mrp, built.discount, built.stock, built.sku, built.status, built.featured, built.fAssured, built.newArrival, JSON.stringify(built.specs), JSON.stringify(built.variants), at, at);
       saveProductImages(id, built.images);
       saveProductVariants(id, built.variants);
+      saveProductFilterValues(id, built.filterValues);
       addInventory(id, built.stock, "Product created", admin.username);
       logActivity(db, { actor: admin.username, role: admin.role, action: "product_create", meta: { id, title: built.title }, ip });
       return json(res, serializeProduct(db.prepare("SELECT * FROM products WHERE id = ?").get(id), true), 201);
@@ -1445,10 +1758,11 @@ async function handleApi(req, res, pathname, parsed) {
       const built = buildProduct(body, existing);
       if (built.error) return fail(res, 400, built.error);
       const slug = built.title !== existing.title ? uniqueSlug(built.title, existing.id) : existing.slug;
-      db.prepare(`UPDATE products SET title = ?, slug = ?, description = ?, category_id = ?, subcategory_id = ?, brand_id = ?, price = ?, mrp = ?, discount = ?, stock = ?, sku = ?, status = ?, featured = ?, specs = ?, variants = ?, updated_at = ? WHERE id = ?`)
-        .run(built.title, slug, built.description, built.categoryId, built.subcategoryId, built.brandId, built.price, built.mrp, built.discount, built.stock, built.sku, built.status, built.featured, JSON.stringify(built.specs), JSON.stringify(built.variants), nowIso(), existing.id);
+      db.prepare(`UPDATE products SET title = ?, slug = ?, description = ?, category_id = ?, subcategory_id = ?, brand_id = ?, price = ?, mrp = ?, discount = ?, stock = ?, sku = ?, status = ?, featured = ?, f_assured = ?, new_arrival = ?, specs = ?, variants = ?, updated_at = ? WHERE id = ?`)
+        .run(built.title, slug, built.description, built.categoryId, built.subcategoryId, built.brandId, built.price, built.mrp, built.discount, built.stock, built.sku, built.status, built.featured, built.fAssured, built.newArrival, JSON.stringify(built.specs), JSON.stringify(built.variants), nowIso(), existing.id);
       if (built.images !== null) saveProductImages(existing.id, built.images);
       saveProductVariants(existing.id, built.variants);
+      saveProductFilterValues(existing.id, built.filterValues);
       if (built.stock !== existing.stock) addInventory(existing.id, built.stock - existing.stock, "Stock updated", admin.username);
       logActivity(db, { actor: admin.username, role: admin.role, action: "product_update", meta: { id: existing.id }, ip });
       return json(res, serializeProduct(db.prepare("SELECT * FROM products WHERE id = ?").get(existing.id), true));
@@ -1487,11 +1801,12 @@ async function handleApi(req, res, pathname, parsed) {
       const id = randomId("prd");
       const at = nowIso();
       try {
-        db.prepare(`INSERT INTO products(id, title, slug, description, category_id, subcategory_id, brand_id, price, mrp, discount, stock, sku, status, featured, rating, rating_count, specs, variants, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?)`)
-          .run(id, built.title, uniqueSlug(built.title, null), built.description, built.categoryId, built.subcategoryId, built.brandId, built.price, built.mrp, built.discount, built.stock, built.sku, built.status, built.featured, JSON.stringify(built.specs), JSON.stringify(built.variants), at, at);
+        db.prepare(`INSERT INTO products(id, title, slug, description, category_id, subcategory_id, brand_id, price, mrp, discount, stock, sku, status, featured, f_assured, new_arrival, rating, rating_count, specs, variants, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?)`)
+          .run(id, built.title, uniqueSlug(built.title, null), built.description, built.categoryId, built.subcategoryId, built.brandId, built.price, built.mrp, built.discount, built.stock, built.sku, built.status, built.featured, built.fAssured, built.newArrival, JSON.stringify(built.specs), JSON.stringify(built.variants), at, at);
         saveProductImages(id, built.images);
         saveProductVariants(id, built.variants);
+        saveProductFilterValues(id, built.filterValues);
         addInventory(id, built.stock, "Bulk product upload", admin.username);
         created.push(id);
       } catch (e) {
@@ -1547,17 +1862,110 @@ async function handleApi(req, res, pathname, parsed) {
     }
   }
 
+  if (seg[1] === "admin" && seg[2] === "filters") {
+    if (seg.length === 3 && method === "GET") {
+      const admin = requireAdmin(req, res, ["super", "manager"]);
+      if (!admin) return;
+      return json(res, {
+        groups: db.prepare("SELECT * FROM filter_groups ORDER BY sort ASC").all(),
+        values: db.prepare("SELECT * FROM filter_values ORDER BY kind ASC, sort ASC, name ASC").all(),
+        categories: db.prepare("SELECT id, name, parent_id FROM categories ORDER BY sort ASC, name ASC").all(),
+      });
+    }
+    const admin = requireAdmin(req, res, ["super"]);
+    if (!admin) return;
+    if (seg[3] === "groups" && method === "PUT") {
+      const body = await readBody(req);
+      const groups = body && body.groups;
+      if (!Array.isArray(groups)) return fail(res, 400, "Provide a groups array");
+      const update = db.prepare("UPDATE filter_groups SET label = ?, enabled = ?, sort = ? WHERE key = ?");
+      groups.forEach((group) => {
+        if (!group || !group.key) return;
+        const existing = db.prepare("SELECT * FROM filter_groups WHERE key = ?").get(group.key);
+        if (!existing) return;
+        update.run(
+          group.label != null ? sanitizeString(group.label, 60) || existing.label : existing.label,
+          group.enabled != null ? (group.enabled ? 1 : 0) : existing.enabled,
+          group.sort != null ? (safeNumber(group.sort, existing.sort) | 0) : existing.sort,
+          group.key
+        );
+      });
+      return json(res, { groups: db.prepare("SELECT * FROM filter_groups ORDER BY sort ASC").all() });
+    }
+    if (seg[3] === "values" && seg.length === 4 && method === "POST") {
+      const body = await readBody(req);
+      const kind = sanitizeString(body && body.kind, 30).toLowerCase();
+      const name = sanitizeString(body && body.name, 60);
+      const value = sanitizeString(body && (body.value || body.name), 60);
+      if (!/^[a-z_]+$/.test(kind)) return fail(res, 400, "Choose a valid filter group");
+      if (!name || !value) return fail(res, 400, "Filter value name is required");
+      const categoryId = body.categoryId && db.prepare("SELECT id FROM categories WHERE id = ?").get(body.categoryId) ? body.categoryId : "";
+      const meta = body.meta && typeof body.meta === "object" ? JSON.stringify(body.meta).slice(0, 500) : "{}";
+      const duplicate = db.prepare("SELECT id FROM filter_values WHERE kind = ? AND value = ? AND category_id = ?").get(kind, value, categoryId);
+      if (duplicate) return fail(res, 409, "That filter value already exists for this scope");
+      const id = randomId("flt");
+      const at = nowIso();
+      db.prepare("INSERT INTO filter_values(id, kind, name, value, meta, category_id, sort, active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .run(id, kind, name, value, meta, categoryId, safeNumber(body.sort, 0) | 0, body.active === false ? 0 : 1, at, at);
+      logActivity(db, { actor: admin.username, role: admin.role, action: "filter_value_create", meta: { kind, value }, ip });
+      return json(res, db.prepare("SELECT * FROM filter_values WHERE id = ?").get(id), 201);
+    }
+    if (seg[3] === "values" && seg.length === 5 && method === "PUT") {
+      const body = await readBody(req);
+      const existing = db.prepare("SELECT * FROM filter_values WHERE id = ?").get(seg[4]);
+      if (!existing) return fail(res, 404, "Filter value not found");
+      const kind = body.kind != null ? sanitizeString(body.kind, 30).toLowerCase() : existing.kind;
+      const name = body.name != null ? sanitizeString(body.name, 60) : existing.name;
+      const value = body.value != null ? sanitizeString(body.value, 60) : existing.value;
+      const categoryId = body.categoryId !== undefined ? (body.categoryId && db.prepare("SELECT id FROM categories WHERE id = ?").get(body.categoryId) ? body.categoryId : "") : existing.category_id;
+      if (!/^[a-z_]+$/.test(kind)) return fail(res, 400, "Choose a valid filter group");
+      if (!name || !value) return fail(res, 400, "Filter value name is required");
+      const duplicate = db.prepare("SELECT id FROM filter_values WHERE kind = ? AND value = ? AND category_id = ? AND id <> ?").get(kind, value, categoryId, existing.id);
+      if (duplicate) return fail(res, 409, "That filter value already exists for this scope");
+      const meta = body.meta && typeof body.meta === "object" ? JSON.stringify(body.meta).slice(0, 500) : existing.meta;
+      db.prepare("UPDATE filter_values SET kind = ?, name = ?, value = ?, meta = ?, category_id = ?, sort = ?, active = ?, updated_at = ? WHERE id = ?")
+        .run(kind, name, value, meta, categoryId, body.sort != null ? (safeNumber(body.sort, existing.sort) | 0) : existing.sort, body.active != null ? (body.active ? 1 : 0) : existing.active, nowIso(), existing.id);
+      if (kind !== existing.kind) db.prepare("UPDATE product_filter_values SET kind = ? WHERE value_id = ?").run(kind, existing.id);
+      logActivity(db, { actor: admin.username, role: admin.role, action: "filter_value_update", meta: { id: existing.id }, ip });
+      return json(res, db.prepare("SELECT * FROM filter_values WHERE id = ?").get(existing.id));
+    }
+    if (seg[3] === "values" && seg.length === 5 && method === "DELETE") {
+      const existing = db.prepare("SELECT * FROM filter_values WHERE id = ?").get(seg[4]);
+      if (!existing) return fail(res, 404, "Filter value not found");
+      db.prepare("DELETE FROM filter_values WHERE id = ?").run(existing.id);
+      logActivity(db, { actor: admin.username, role: admin.role, action: "filter_value_delete", meta: { id: existing.id }, ip });
+      return json(res, { deleted: true });
+    }
+  }
+
   if (seg[1] === "admin" && seg[2] === "brands") {
     const admin = requireAdmin(req, res, ["super"]);
     if (!admin) return;
-    if (seg.length === 3 && method === "GET") return json(res, { brands: db.prepare("SELECT * FROM brands ORDER BY name").all() });
+    if (seg.length === 3 && method === "GET") return json(res, { brands: db.prepare("SELECT * FROM brands ORDER BY popular DESC, sort ASC, name ASC").all() });
     if (seg.length === 3 && method === "POST") {
       const body = await readBody(req);
       const name = sanitizeString(body && body.name, 80);
       if (!name) return fail(res, 400, "Brand name is required");
+      const logo = safeUrl(body && body.logo, 500);
+      if (logo === null) return fail(res, 400, "Brand logo must be a relative path or HTTPS URL");
       const id = randomId("brd");
-      db.prepare("INSERT INTO brands(id, name, slug, active) VALUES (?, ?, ?, 1)").run(id, name, slugify(name) + "-" + randomCode(3).toLowerCase());
+      db.prepare("INSERT INTO brands(id, name, slug, logo, popular, sort, active) VALUES (?, ?, ?, ?, ?, ?, ?)")
+        .run(id, name, slugify(name) + "-" + randomCode(3).toLowerCase(), logo, body && body.popular ? 1 : 0, safeNumber(body && body.sort, 0) | 0, body && body.active === false ? 0 : 1);
+      logActivity(db, { actor: admin.username, role: admin.role, action: "brand_create", meta: { id, name }, ip });
       return json(res, db.prepare("SELECT * FROM brands WHERE id = ?").get(id), 201);
+    }
+    if (seg.length === 4 && method === "PUT") {
+      const body = await readBody(req);
+      const existing = db.prepare("SELECT * FROM brands WHERE id = ?").get(seg[3]);
+      if (!existing) return fail(res, 404, "Brand not found");
+      const name = body.name != null ? sanitizeString(body.name, 80) : existing.name;
+      if (!name) return fail(res, 400, "Brand name is required");
+      const logo = body.logo !== undefined ? safeUrl(body.logo, 500) : existing.logo;
+      if (logo === null) return fail(res, 400, "Brand logo must be a relative path or HTTPS URL");
+      db.prepare("UPDATE brands SET name = ?, logo = ?, popular = ?, sort = ?, active = ? WHERE id = ?")
+        .run(name, logo, body.popular != null ? (body.popular ? 1 : 0) : existing.popular, body.sort != null ? (safeNumber(body.sort, existing.sort) | 0) : existing.sort, body.active != null ? (body.active ? 1 : 0) : existing.active, existing.id);
+      logActivity(db, { actor: admin.username, role: admin.role, action: "brand_update", meta: { id: existing.id }, ip });
+      return json(res, db.prepare("SELECT * FROM brands WHERE id = ?").get(existing.id));
     }
     if (seg.length === 4 && method === "DELETE") {
       db.prepare("DELETE FROM brands WHERE id = ?").run(seg[3]);

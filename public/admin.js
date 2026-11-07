@@ -18,6 +18,14 @@
 
   var STATUS_FLOW = ["Ordered", "Packed", "Shipped", "Out for Delivery", "Delivered"];
 
+  var FILTER_VALUE_KINDS = [
+    { key: "gender", label: "Gender" },
+    { key: "color", label: "Colour" },
+    { key: "size", label: "Size" },
+    { key: "age_group", label: "Age group" },
+    { key: "offers", label: "Offers" },
+  ];
+
   var NAV = [
     { id: "dashboard", label: "Dashboard", icon: "dashboard", roles: ["super", "manager"], section: "Manage" },
     { id: "products", label: "Products", icon: "products", roles: ["super", "manager"] },
@@ -25,6 +33,7 @@
     { id: "reviews", label: "Reviews", icon: "reviews", roles: ["super", "manager"] },
     { id: "categories", label: "Categories", icon: "categories", roles: ["super"], section: "Store setup" },
     { id: "brands", label: "Brands", icon: "brands", roles: ["super"] },
+    { id: "filters", label: "Filters", icon: "filters", roles: ["super"] },
     { id: "banners", label: "Banners", icon: "banners", roles: ["super"] },
     { id: "coupons", label: "Coupons", icon: "coupons", roles: ["super"] },
     { id: "customers", label: "Customers", icon: "customers", roles: ["super"], section: "People" },
@@ -41,6 +50,7 @@
     reviews: { title: "Reviews", sub: "Moderate customer feedback" },
     categories: { title: "Categories", sub: "Organise your catalog structure" },
     brands: { title: "Brands", sub: "Manage product brands" },
+    filters: { title: "Filters", sub: "Control filter groups and values shown to customers" },
     banners: { title: "Banners", sub: "Homepage promotional banners" },
     coupons: { title: "Coupons", sub: "Discount codes and offers" },
     customers: { title: "Customers", sub: "Registered store customers" },
@@ -57,6 +67,7 @@
     reviews: '<path d="M12 3l2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-2.9-5.6 2.9 1.1-6.2L3 9.6l6.2-.9L12 3z"/>',
     categories: '<path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/>',
     brands: '<path d="M20 12l-8 8-9-9V3h8l9 9z"/><circle cx="7.5" cy="7.5" r="1.5"/>',
+    filters: '<path d="M4 6h16M7 12h10M10 18h4"/><circle cx="8" cy="6" r="1.5"/><circle cx="14" cy="12" r="1.5"/><circle cx="12" cy="18" r="1.5"/>',
     banners: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9" r="1.5"/><path d="M21 15l-5-5L5 20"/>',
     coupons: '<path d="M3 9V7a2 2 0 012-2h14a2 2 0 012 2v2a3 3 0 000 6v2a2 2 0 01-2 2H5a2 2 0 01-2-2v-2a3 3 0 000-6z"/><path d="M13 5v14"/>',
     customers: '<circle cx="9" cy="8" r="3.2"/><path d="M3 20a6 6 0 0112 0"/><path d="M16 5.5a3 3 0 010 5.5"/><path d="M18 20a5.5 5.5 0 00-2-4.2"/>',
@@ -483,8 +494,10 @@
     if (id) product = await api("/api/admin/products/" + encodeURIComponent(id));
     var categories = await catalogCategories();
     var brands = await catalogBrands();
+    var filterData = await api("/api/admin/filters");
+    var filterValues = filterData.values || [];
     openModal(modalHead(id ? "Edit product" : "Add product", id ? "Update catalog details" : "Create a new catalog item") +
-      '<div class="modal-body">' + productFormHtml(product, categories, brands) + "</div>", true);
+      '<div class="modal-body">' + productFormHtml(product, categories, brands, filterValues) + "</div>", true);
     var form = $('[data-form="product"]');
     if (form) filterSubcats(form);
   }
@@ -505,7 +518,7 @@
     });
   }
 
-  function productFormHtml(p, categories, brands) {
+  function productFormHtml(p, categories, brands, filterValues) {
     var product = p || {};
     var catOptions = '<option value="">\u2014 Select category \u2014</option>';
     var subOptions = '<option value="">\u2014 None \u2014</option>';
@@ -524,6 +537,17 @@
     var variantRows = (product.variants || []).map(variantRow).join("");
     var specs = product.specs || {};
     var specRows = Object.keys(specs).map(function (k) { return specRow(k, specs[k]); }).join("");
+    var selectedFilters = product.filterValues || [];
+    var filterRows = FILTER_VALUE_KINDS.map(function (kind) {
+      var options = (filterValues || []).filter(function (value) { return value.kind === kind.key && Number(value.active) !== 0; });
+      if (!options.length) return "";
+      return '<label class="field full"><span>' + esc(kind.label) + "</span>" +
+        '<select multiple size="' + Math.min(5, Math.max(2, options.length)) + '" data-role="filter-values" data-kind="' + esc(kind.key) + '">' +
+        options.map(function (value) {
+          return '<option value="' + esc(value.id) + '"' + (selectedFilters.indexOf(value.id) >= 0 ? " selected" : "") + ">" +
+            esc(value.name) + (value.category_id ? " (scoped)" : "") + "</option>";
+        }).join("") + "</select></label>";
+    }).join("");
 
     return '<form data-form="product" data-id="' + esc(product.id || "") + '" novalidate>' +
       '<div class="form-grid">' +
@@ -538,6 +562,7 @@
       field("Stock quantity", '<input name="stock" type="number" min="0" step="1" value="' + esc(product.stock != null ? product.stock : 0) + '">') +
       field("Status", '<select name="status"><option value="active"' + (product.status !== "inactive" ? " selected" : "") + '>Active</option><option value="inactive"' + (product.status === "inactive" ? " selected" : "") + ">Inactive</option></select>") +
       '<label class="check-row"><input type="checkbox" name="featured"' + (product.featured ? " checked" : "") + "> Featured on homepage</label>" +
+      '<label class="check-row"><input type="checkbox" name="newArrival"' + (product.newArrival ? " checked" : "") + "> New arrival</label>" +
       "</div>" +
 
       '<div class="section-title">Images</div>' +
@@ -552,6 +577,13 @@
       '<div class="section-title">Specifications</div>' +
       '<div class="rows" data-role="specs">' + specRows + "</div>" +
       '<div style="margin-top:8px"><button class="btn small" type="button" data-action="add-spec">+ Add specification</button></div>' +
+      '<p class="help">Age group filters are created automatically from specifications named Age, Age group or Recommended age. Colour and size filters follow variants.</p>' +
+
+      '<div class="section-title">Filter tags</div>' +
+      (filterRows
+        ? '<div class="form-grid">' + filterRows + "</div>" +
+          '<p class="help">Hold Ctrl (Windows) or Cmd (Mac) to select multiple values. Manage these options under Filters.</p>'
+        : '<p class="help">No filter values yet. Add them under Store setup \u203A Filters.</p>') +
 
       '<div class="form-error" data-role="form-error" hidden></div>' +
       '<div class="form-actions"><button class="btn" type="button" data-action="close-modal">Cancel</button>' +
@@ -627,6 +659,9 @@
     var price = fd.get("price");
     if (title.length < 3) return showFormError(form, "Product title must be at least 3 characters.");
     if (price === "" || Number(price) < 0) return showFormError(form, "Enter a valid selling price.");
+    var filterValues = $$('[data-role="filter-values"]', form).reduce(function (ids, select) {
+      return ids.concat(Array.prototype.map.call(select.selectedOptions, function (option) { return option.value; }));
+    }, []);
 
     var body = {
       title: title,
@@ -640,6 +675,8 @@
       stock: fd.get("stock") === "" ? 0 : Number(fd.get("stock")),
       status: fd.get("status") === "inactive" ? "inactive" : "active",
       featured: form.querySelector('[name="featured"]').checked,
+      newArrival: form.querySelector('[name="newArrival"]').checked,
+      filterValues: filterValues,
       images: images,
       variants: variants,
       specs: specs,
@@ -950,11 +987,14 @@
     html += '<div class="card">';
     if (!brands.length) html += emptyState("No brands yet", "Add a brand to tag your products.");
     else {
-      html += '<div class="table-wrap"><table class="data"><thead><tr><th>Brand</th><th>Slug</th><th>Status</th><th>Actions</th></tr></thead><tbody>';
+      html += '<div class="table-wrap"><table class="data"><thead><tr><th>Brand</th><th>Slug</th><th>Popular</th><th>Sort</th><th>Status</th><th>Actions</th></tr></thead><tbody>';
       brands.forEach(function (b) {
-        html += "<tr><td><strong>" + esc(b.name) + "</strong></td><td class=\"muted\">" + esc(b.slug) + "</td><td>" +
-          statusBadge(b.active ? "Active" : "Inactive") + "</td><td><button class=\"link-btn danger\" type=\"button\" data-action=\"delete-brand\" data-id=\"" +
-          esc(b.id) + "\">Delete</button></td></tr>";
+        var logo = b.logo ? '<img class="thumb" src="' + esc(b.logo) + '" alt="">' : '<span class="brand-dot">' + esc(String(b.name || "?").slice(0, 1)) + "</span>";
+        html += "<tr><td><div class=\"cell-product\">" + logo + "<div><strong>" + esc(b.name) + "</strong></div></div></td>" +
+          "<td class=\"muted\">" + esc(b.slug) + "</td><td>" + (b.popular ? '<span class="badge blue">Popular</span>' : '<span class="muted">\u2014</span>') + "</td>" +
+          "<td>" + esc(b.sort) + "</td><td>" + statusBadge(b.active ? "Active" : "Inactive") + "</td>" +
+          '<td><div class="actions"><button class="link-btn" type="button" data-action="edit-brand" data-id="' + esc(b.id) + '">Edit</button>' +
+          '<button class="link-btn danger" type="button" data-action="delete-brand" data-id="' + esc(b.id) + '">Delete</button></div></td></tr>';
       });
       html += "</tbody></table></div>";
     }
@@ -962,23 +1002,41 @@
     $("#view").innerHTML = html;
   }
 
-  function openBrandForm() {
-    openModal(modalHead("Add brand", "Brands help customers filter products") +
-      '<div class="modal-body"><form data-form="brand">' +
+  function openBrandForm(brand) {
+    var b = brand || {};
+    openModal(modalHead(b.id ? "Edit brand" : "Add brand", "Brands power the rich brand filter on the storefront") +
+      '<div class="modal-body"><form data-form="brand" data-id="' + esc(b.id || "") + '">' +
       '<div class="form-error" data-role="form-error" hidden></div>' +
-      field("Brand name *", '<input name="name" required maxlength="80" placeholder="e.g. Aamart Essentials">', true) +
+      '<div class="form-grid">' +
+      field("Brand name *", '<input name="name" required maxlength="80" value="' + esc(b.name || "") + '" placeholder="e.g. Aamart Essentials">', true) +
+      field("Logo URL", '<input name="logo" maxlength="500" value="' + esc(b.logo || "") + '" placeholder="/uploads/logo.png or https://...">', true) +
+      '<div class="upload-box">Upload brand logo (PNG, JPG, GIF or WEBP \u00B7 max 4 MB)<input type="file" accept="image/png,image/jpeg,image/gif,image/webp" data-action="upload-brand-logo"></div>' +
+      field("Sort order", '<input name="sort" type="number" step="1" value="' + esc(b.sort != null ? b.sort : 0) + '">') +
+      '<label class="check-row"><input type="checkbox" name="popular"' + (b.popular ? " checked" : "") + "> Show as popular brand</label>" +
+      '<label class="check-row"><input type="checkbox" name="active"' + (b.id ? (b.active ? " checked" : "") : " checked") + "> Active</label>" +
+      "</div>" +
       '<div class="form-actions"><button class="btn" type="button" data-action="close-modal">Cancel</button>' +
-      '<button class="btn primary" type="submit">Create brand</button></div></form></div>');
+      '<button class="btn primary" type="submit">' + (b.id ? "Save changes" : "Create brand") + "</button></div></form></div>");
   }
 
   async function saveBrand(form, button) {
     clearFormError(form);
-    var name = String(new FormData(form).get("name") || "").trim();
+    var fd = new FormData(form);
+    var name = String(fd.get("name") || "").trim();
     if (!name) return showFormError(form, "Brand name is required.");
+    var body = {
+      name: name,
+      logo: String(fd.get("logo") || "").trim(),
+      popular: form.querySelector('[name="popular"]').checked,
+      sort: Number(fd.get("sort") || 0),
+      active: form.querySelector('[name="active"]').checked,
+    };
+    var id = form.getAttribute("data-id");
     btnLabel(button, "Saving\u2026");
     try {
-      await api("/api/admin/brands", { body: { name: name } });
-      toast("Brand created.", "success");
+      if (id) await api("/api/admin/brands/" + encodeURIComponent(id), { method: "PUT", body: body });
+      else await api("/api/admin/brands", { body: body });
+      toast(id ? "Brand updated." : "Brand created.", "success");
       state.cache.brands = null;
       closeModal();
       route();
@@ -986,6 +1044,144 @@
       showFormError(form, err.message);
       btnReset(button);
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Filters
+  // ---------------------------------------------------------------------------
+  async function viewFilters() {
+    var data = await api("/api/admin/filters");
+    var groups = data.groups || [];
+    var values = data.values || [];
+    var categories = data.categories || [];
+    var groupByKey = {};
+    groups.forEach(function (g) { groupByKey[g.key] = g; });
+    var categoryById = {};
+    categories.forEach(function (c) { categoryById[c.id] = c.name; });
+
+    var actions = '<button class="btn primary" type="button" data-action="new-filter-value">+ Add filter value</button>';
+    var html = pageHead("Filter system", groups.length + " groups \u00B7 " + values.length + " values", actions);
+
+    html += '<div class="card card-pad"><div class="card-head"><h3>Filter groups</h3><span class="muted small">Toggle, rename and order storefront filters</span></div>' +
+      '<form data-form="filter-groups"><div class="table-wrap"><table class="data"><thead><tr><th>Group</th><th>Label</th><th>Enabled</th><th>Sort</th></tr></thead><tbody>' +
+      groups.map(function (g) {
+        return '<tr data-role="filter-group-row" data-key="' + esc(g.key) + '"><td><strong>' + esc(g.key) + '</strong><br><small class="muted">' + esc(g.type) + "</small></td>" +
+          '<td><input class="input" data-role="group-label" maxlength="60" value="' + esc(g.label) + '"></td>' +
+          '<td><label class="check-row"><input type="checkbox" data-role="group-enabled"' + (g.enabled ? " checked" : "") + "> On</label></td>" +
+          '<td><input class="input" data-role="group-sort" type="number" step="1" style="max-width:100px" value="' + esc(g.sort) + '"></td></tr>';
+      }).join("") + '</tbody></table></div><div class="form-actions"><button class="btn primary" type="submit">Save groups</button></div></form></div>';
+
+    html += '<div class="card"><div class="card-head"><h3>Filter values</h3><span class="muted small">Only active values appear on the storefront</span></div>';
+    if (!values.length) {
+      html += emptyState("No filter values yet", "Add values like Men, Blue, M or India.");
+    } else {
+      html += '<div class="table-wrap"><table class="data"><thead><tr><th>Value</th><th>Group</th><th>Scope</th><th>Sort</th><th>Status</th><th>Actions</th></tr></thead><tbody>';
+      values.forEach(function (v) {
+        var meta = {};
+        try { meta = JSON.parse(v.meta || "{}"); } catch (e) { meta = {}; }
+        var swatch = v.kind === "color" && meta.hex ? '<span class="filter-swatch" style="background:' + esc(meta.hex) + '"></span>' : "";
+        var kindLabel = groupByKey[v.kind] ? groupByKey[v.kind].label : v.kind;
+        html += "<tr><td>" + swatch + "<strong>" + esc(v.name) + '</strong><br><small class="muted">' + esc(v.value) + "</small></td>" +
+          "<td>" + esc(kindLabel) + "</td><td>" + esc(v.category_id ? (categoryById[v.category_id] || "Category") : "All products") + "</td>" +
+          "<td>" + esc(v.sort) + "</td><td>" + statusBadge(v.active ? "Active" : "Inactive") + "</td>" +
+          '<td><div class="actions"><button class="link-btn" type="button" data-action="edit-filter-value" data-id="' + esc(v.id) + '">Edit</button>' +
+          '<button class="link-btn danger" type="button" data-action="delete-filter-value" data-id="' + esc(v.id) + '">Delete</button></div></td></tr>';
+      });
+      html += "</tbody></table></div>";
+    }
+    html += "</div>";
+    $("#view").innerHTML = html;
+  }
+
+  async function openFilterValueForm(id) {
+    var data = await api("/api/admin/filters");
+    var value = null;
+    if (id) value = (data.values || []).filter(function (v) { return v.id === id; })[0] || null;
+    var v = value || {};
+    var meta = {};
+    try { meta = JSON.parse(v.meta || "{}"); } catch (e) { meta = {}; }
+    var kindOptions = FILTER_VALUE_KINDS.map(function (kind) {
+      return '<option value="' + esc(kind.key) + '"' + ((v.kind || "gender") === kind.key ? " selected" : "") + ">" + esc(kind.label) + "</option>";
+    }).join("");
+    var scopeOptions = '<option value="">All products</option>' + (data.categories || []).map(function (c) {
+      return '<option value="' + esc(c.id) + '"' + (v.category_id === c.id ? " selected" : "") + ">" + esc(c.name) + "</option>";
+    }).join("");
+    openModal(modalHead(v.id ? "Edit filter value" : "Add filter value", "Customers will see this in the storefront filter panel") +
+      '<div class="modal-body"><form data-form="filter-value" data-id="' + esc(v.id || "") + '">' +
+      '<div class="form-error" data-role="form-error" hidden></div>' +
+      '<div class="form-grid">' +
+      field("Filter group *", '<select name="kind" required>' + kindOptions + "</select>") +
+      field("Scope", '<select name="categoryId">' + scopeOptions + "</select>") +
+      field("Display name *", '<input name="name" required maxlength="60" value="' + esc(v.name || "") + '" placeholder="e.g. Navy Blue">', true) +
+      field("Internal value *", '<input name="value" required maxlength="60" value="' + esc(v.value || "") + '" placeholder="e.g. Navy Blue">', true) +
+      field("Swatch colour", '<input name="color" maxlength="120" value="' + esc(meta.hex || "") + '" placeholder="Hex like #1e3a8a (colour values)">') +
+      field("Sort order", '<input name="sort" type="number" step="1" value="' + esc(v.sort != null ? v.sort : 0) + '">') +
+      '<label class="check-row"><input type="checkbox" name="active"' + (v.id ? (v.active ? " checked" : "") : " checked") + "> Active</label>" +
+      "</div>" +
+      '<div class="form-actions"><button class="btn" type="button" data-action="close-modal">Cancel</button>' +
+      '<button class="btn primary" type="submit">' + (v.id ? "Save changes" : "Create value") + "</button></div></form></div>");
+  }
+
+  async function saveFilterValue(form, button) {
+    clearFormError(form);
+    var fd = new FormData(form);
+    var name = String(fd.get("name") || "").trim();
+    var value = String(fd.get("value") || "").trim();
+    if (!name || !value) return showFormError(form, "Display name and internal value are required.");
+    var meta = {};
+    var color = String(fd.get("color") || "").trim();
+    if (color) meta.hex = color;
+    var body = {
+      kind: fd.get("kind"),
+      name: name,
+      value: value,
+      categoryId: fd.get("categoryId") || "",
+      sort: Number(fd.get("sort") || 0),
+      active: form.querySelector('[name="active"]').checked,
+      meta: meta,
+    };
+    var id = form.getAttribute("data-id");
+    btnLabel(button, "Saving\u2026");
+    try {
+      if (id) await api("/api/admin/filters/values/" + encodeURIComponent(id), { method: "PUT", body: body });
+      else await api("/api/admin/filters/values", { body: body });
+      toast(id ? "Filter value updated." : "Filter value created.", "success");
+      closeModal();
+      route();
+    } catch (err) {
+      showFormError(form, err.message);
+      btnReset(button);
+    }
+  }
+
+  async function saveFilterGroups(form, button) {
+    clearFormError(form);
+    var groups = $$('[data-role="filter-group-row"]', form).map(function (row) {
+      return {
+        key: row.getAttribute("data-key"),
+        label: row.querySelector('[data-role="group-label"]').value.trim(),
+        enabled: row.querySelector('[data-role="group-enabled"]').checked,
+        sort: Number(row.querySelector('[data-role="group-sort"]').value || 0),
+      };
+    });
+    btnLabel(button, "Saving\u2026");
+    try {
+      await api("/api/admin/filters/groups", { method: "PUT", body: { groups: groups } });
+      toast("Filter groups saved.", "success");
+      route();
+    } catch (err) {
+      showFormError(form, err.message);
+      btnReset(button);
+    }
+  }
+
+  async function deleteFilterValue(id) {
+    if (!window.confirm("Delete this filter value? Products using it will lose the tag.")) return;
+    try {
+      await api("/api/admin/filters/values/" + encodeURIComponent(id), { method: "DELETE" });
+      toast("Filter value deleted.", "success");
+      route();
+    } catch (err) { toast(err.message, "error"); }
   }
 
   // ---------------------------------------------------------------------------
@@ -1410,6 +1606,7 @@
     reviews: viewReviews,
     categories: viewCategories,
     brands: viewBrands,
+    filters: viewFilters,
     banners: viewBanners,
     coupons: viewCoupons,
     customers: viewCustomers,
@@ -1472,7 +1669,18 @@
     if (action === "delete-category") { deleteRecord("category", id, "category"); return; }
 
     if (action === "new-brand") { openBrandForm(); return; }
+    if (action === "edit-brand") {
+      api("/api/admin/brands").then(function (data) {
+        var brand = (data.brands || []).filter(function (b) { return b.id === id; })[0];
+        if (brand) openBrandForm(brand);
+      }).catch(function (e) { toast(e.message, "error"); });
+      return;
+    }
     if (action === "delete-brand") { deleteRecord("brand", id, "brand"); return; }
+
+    if (action === "new-filter-value") { openFilterValueForm(null).catch(function (e) { toast(e.message, "error"); }); return; }
+    if (action === "edit-filter-value") { openFilterValueForm(id).catch(function (e) { toast(e.message, "error"); }); return; }
+    if (action === "delete-filter-value") { deleteFilterValue(id); return; }
 
     if (action === "new-banner") { openBannerForm(null).catch(function (e) { toast(e.message, "error"); }); return; }
     if (action === "edit-banner") { openBannerForm(id).catch(function (e) { toast(e.message, "error"); }); return; }
@@ -1517,6 +1725,8 @@
     }
     if (kind === "category") { saveCategory(form, button); return; }
     if (kind === "brand") { saveBrand(form, button); return; }
+    if (kind === "filter-value") { saveFilterValue(form, button); return; }
+    if (kind === "filter-groups") { saveFilterGroups(form, button); return; }
     if (kind === "banner") { saveBanner(form, button); return; }
     if (kind === "coupon") { saveCoupon(form, button); return; }
     if (kind === "settings") { saveSettings(form, button); return; }
@@ -1530,6 +1740,10 @@
 
     if (target.matches('[data-action="upload-images"]')) {
       uploadImages(target);
+      return;
+    }
+    if (target.matches('[data-action="upload-brand-logo"]')) {
+      uploadBrandLogo(target);
       return;
     }
     if (target.matches('[data-action="upload-banner"]')) {
@@ -1632,6 +1846,21 @@
         toast("Uploaded " + file.name + ".", "success");
       } catch (err) { toast(err.message, "error"); }
     }
+    input.value = "";
+  }
+
+  async function uploadBrandLogo(input) {
+    var form = input.form;
+    var file = (input.files || [])[0];
+    if (!form || !file) return;
+    if (file.size > 4 * 1024 * 1024) { toast("Image is larger than 4 MB.", "error"); input.value = ""; return; }
+    try {
+      var dataUrl = await readFileAsDataUrl(file);
+      var res = await api("/api/admin/upload", { body: { data: dataUrl } });
+      var field = form.querySelector('[name="logo"]');
+      if (field) field.value = res.url;
+      toast("Brand logo uploaded.", "success");
+    } catch (err) { toast(err.message, "error"); }
     input.value = "";
   }
 

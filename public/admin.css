@@ -686,6 +686,11 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--blue); }
   .stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
+.brand-dot { display: inline-flex; align-items: center; justify-content: center; width: 38px; height: 38px; border-radius: 10px; background: var(--blue-soft); color: var(--blue); font-weight: 800; }
+.filter-swatch { display: inline-block; width: 18px; height: 18px; border-radius: 50%; border: 1px solid rgba(15, 23, 42, 0.15); margin-right: 8px; vertical-align: -4px; }
+select[multiple][data-role="filter-values"] { min-height: 96px; padding: 6px; }
+select[multiple][data-role="filter-values"] option { padding: 5px 7px; border-radius: 6px; }
+
 /* ---------------- Accessibility ---------------- */
 :focus-visible { outline: 3px solid rgba(37, 99, 235, 0.55); outline-offset: 2px; }
 @media (prefers-reduced-motion: reduce) {

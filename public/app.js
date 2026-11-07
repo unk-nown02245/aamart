@@ -319,6 +319,7 @@ function requireAuth(next) {
 async function render() {
   const token = ++renderToken;
   clearTimers();
+  if (document.body.classList.contains("filters-open")) closeFilters();
   const route = parseRoute();
   state.route = route;
   updateChrome(route);
@@ -518,20 +519,244 @@ async function renderCategories(token) {
 /* ---------------------------------------------------------------------------
    Product listing
    --------------------------------------------------------------------------- */
+function parseCsv(value) {
+  return String(value || "").split(",").map((v) => v.trim()).filter(Boolean);
+}
+
+function draftFromQuery(q) {
+  return {
+    q: q.q || "",
+    category: q.category || "",
+    sub: q.sub || "",
+    sort: q.sort || "popularity",
+    brand: parseCsv(q.brand),
+    gender: parseCsv(q.gender),
+    color: parseCsv(q.color),
+    size: parseCsv(q.size),
+    age_group: parseCsv(q.age_group),
+    offers: parseCsv(q.offers),
+    minPrice: q.minPrice || "",
+    maxPrice: q.maxPrice || "",
+    rating: q.rating || "",
+    discount: q.discount || "",
+    newArrival: q.newArrival === "1" || q.new_arrivals === "1",
+  };
+}
+
+function draftToParams(draft) {
+  const params = new URLSearchParams();
+  if (draft.q) params.set("q", draft.q);
+  if (draft.category) params.set("category", draft.category);
+  if (draft.sub) params.set("sub", draft.sub);
+  if (draft.sort && draft.sort !== "popularity") params.set("sort", draft.sort);
+  ["brand", "gender", "color", "size", "age_group", "offers"].forEach((kind) => {
+    if (draft[kind] && draft[kind].length) params.set(kind, draft[kind].join(","));
+  });
+  if (draft.minPrice !== "") params.set("minPrice", draft.minPrice);
+  if (draft.maxPrice !== "") params.set("maxPrice", draft.maxPrice);
+  if (draft.rating) params.set("rating", draft.rating);
+  if (draft.discount) params.set("discount", draft.discount);
+  if (draft.newArrival) params.set("newArrival", "1");
+  return params;
+}
+
+function normalizeDraftIds(filterData, draft) {
+  const multiKeys = ["brand", "gender", "color", "size", "age_group", "offers"];
+  (filterData.groups || []).forEach((group) => {
+    if (multiKeys.indexOf(group.key) < 0) return;
+    const normalized = [];
+    (draft[group.key] || []).forEach((token) => {
+      const option = (group.options || []).filter((o) =>
+        String(token).toLowerCase() === String(o.id || "").toLowerCase() ||
+        String(token).toLowerCase() === String(o.value || "").toLowerCase() ||
+        String(token).toLowerCase() === String(o.name || "").toLowerCase()
+      )[0];
+      const value = String(option ? (option.id || option.value) : token);
+      if (normalized.indexOf(value) < 0) normalized.push(value);
+    });
+    draft[group.key] = normalized;
+  });
+}
+
+function draftHref(draft) {
+  const text = draftToParams(draft).toString();
+  return "#/products" + (text ? "?" + text : "");
+}
+
+function filterGroupSelectionCount(group, draft) {
+  if (group.key === "price") return draft.minPrice !== "" || draft.maxPrice !== "" ? 1 : 0;
+  if (group.key === "rating") return draft.rating ? 1 : 0;
+  if (group.key === "discount") return draft.discount ? 1 : 0;
+  if (group.key === "new_arrivals") return draft.newArrival ? 1 : 0;
+  if (group.key === "sort") return 0;
+  return (draft[group.key] || []).length;
+}
+
+function activeFilterChips(filterData, draft) {
+  const chips = [];
+  const optionName = (group, id) => {
+    const option = (group.options || []).filter((o) => String(o.id || o.value) === String(id))[0];
+    return option ? option.name : id;
+  };
+  if (draft.q) {
+    const next = { ...draft, q: "" };
+    chips.push('<a class="chip" href="' + draftHref(next) + '">\u2715 "' + escapeHtml(draft.q) + '"</a>');
+  }
+  if (draft.category) {
+    const next = { ...draft, category: "", sub: "" };
+    chips.push('<a class="chip" href="' + draftHref(next) + '">\u2715 ' + escapeHtml(draft.category) + "</a>");
+  }
+  if (draft.sub) {
+    const next = { ...draft, sub: "" };
+    chips.push('<a class="chip" href="' + draftHref(next) + '">\u2715 ' + escapeHtml(draft.sub) + "</a>");
+  }
+  (filterData.groups || []).forEach((group) => {
+    if (group.key === "sort" || group.key === "price" || group.key === "rating" || group.key === "discount" || group.key === "new_arrivals") return;
+    (draft[group.key] || []).forEach((id) => {
+      const next = { ...draft, [group.key]: (draft[group.key] || []).filter((v) => String(v) !== String(id)) };
+      chips.push('<a class="chip" href="' + draftHref(next) + '">\u2715 ' + escapeHtml(optionName(group, id)) + "</a>");
+    });
+  });
+  if (draft.minPrice !== "" || draft.maxPrice !== "") {
+    const next = { ...draft, minPrice: "", maxPrice: "" };
+    chips.push('<a class="chip" href="' + draftHref(next) + '">\u2715 \u20B9' + escapeHtml(draft.minPrice || "0") + " \u2013 \u20B9" + escapeHtml(draft.maxPrice || "\u221E") + "</a>");
+  }
+  if (draft.rating) {
+    const next = { ...draft, rating: "" };
+    chips.push('<a class="chip" href="' + draftHref(next) + '">\u2715 ' + escapeHtml(draft.rating) + "\u2605 & up</a>");
+  }
+  if (draft.discount) {
+    const next = { ...draft, discount: "" };
+    chips.push('<a class="chip" href="' + draftHref(next) + '">\u2715 ' + escapeHtml(draft.discount) + "%+ off</a>");
+  }
+  if (draft.newArrival) {
+    const next = { ...draft, newArrival: false };
+    chips.push('<a class="chip" href="' + draftHref(next) + '">\u2715 New arrivals</a>');
+  }
+  return chips;
+}
+
+function filterGroupContent(group, draft) {
+  if (group.key === "sort") {
+    return '<div class="fopt-list">' + (group.options || []).map((option) =>
+      '<label class="fopt"><input type="radio" name="f-sort" data-filter-kind="sort" value="' + escapeHtml(option.value) + '"' + (draft.sort === option.value ? " checked" : "") + '><span>' + escapeHtml(option.name) + "</span></label>"
+    ).join("") + "</div>";
+  }
+  if (group.key === "brand") {
+    return '<label class="filter-search"><span>\u{1F50D}</span><input type="search" placeholder="Search brands" data-role="filter-brand-search"></label>' +
+      '<div class="brand-grid">' + (group.options || []).map((option) => {
+        const selected = (draft.brand || []).some((v) => String(v) === String(option.id) || String(v) === String(option.name));
+        const logo = option.logo ? '<img src="' + safeImage(option.logo) + '" alt="">' : '<span class="brand-initial">' + escapeHtml(String(option.name || "?").slice(0, 1)) + "</span>";
+        return '<label class="brand-opt' + (selected ? " selected" : "") + '" data-brand-name="' + escapeHtml(String(option.name).toLowerCase()) + '">' +
+          '<input type="checkbox" data-filter-kind="brand" value="' + escapeHtml(option.id) + '"' + (selected ? " checked" : "") + ">" +
+          logo + '<span class="brand-opt-name">' + escapeHtml(option.name) + '</span><small>' + Number(option.count || 0) + "</small></label>";
+      }).join("") + "</div>";
+  }
+  if (group.key === "price") {
+    return '<div class="price-range"><div class="field-row"><input class="input" type="number" min="0" placeholder="Min" data-filter-price="min" value="' + escapeHtml(draft.minPrice) + '"><input class="input" type="number" min="0" placeholder="Max" data-filter-price="max" value="' + escapeHtml(draft.maxPrice) + '"></div>' +
+      '<div class="price-scale"><span>\u20B9' + Number(group.min || 0) + "</span><span>\u20B9" + Number(group.max || 0) + "+</span></div></div>" +
+      '<div class="fopt-list">' + (group.options || []).map((option) =>
+        '<button type="button" class="fopt preset" data-action="filter-price-preset" data-min="' + escapeHtml(option.min) + '" data-max="' + escapeHtml(option.max == null ? "" : option.max) + '"><span>' + escapeHtml(option.name) + '</span><small>' + Number(option.count || 0) + "</small></button>"
+      ).join("") + "</div>";
+  }
+  if (group.key === "rating" || group.key === "discount") {
+    const selected = group.key === "rating" ? draft.rating : draft.discount;
+    return '<div class="fopt-list"><label class="fopt"><input type="radio" name="f-' + group.key + '" data-filter-kind="' + group.key + '" value=""' + (!selected ? " checked" : "") + '><span>Any</span></label>' +
+      (group.options || []).map((option) =>
+        '<label class="fopt"><input type="radio" name="f-' + group.key + '" data-filter-kind="' + group.key + '" value="' + escapeHtml(option.value) + '"' + (String(selected) === String(option.value) ? " checked" : "") + '><span>' + escapeHtml(option.name) + '</span><small>' + Number(option.count || 0) + "</small></label>"
+      ).join("") + "</div>";
+  }
+  if (group.key === "new_arrivals") {
+    const option = (group.options || [])[0] || { name: group.label, count: 0 };
+    return '<label class="fopt toggle"><input type="checkbox" data-filter-kind="newArrival"' + (draft.newArrival ? " checked" : "") + '><span>' + escapeHtml(option.name) + '</span><small>' + Number(option.count || 0) + "</small></label>";
+  }
+  if (group.key === "color") {
+    return '<label class="filter-search"><span aria-hidden="true">\u{1F50D}</span><input type="search" placeholder="Search" data-role="filter-color-search" autocomplete="off"></label>' +
+      '<div class="fopt-list color-list" data-role="filter-color-list">' +
+      (group.options || []).map((option) => {
+        const selected = (draft.color || []).some((v) => String(v) === String(option.id) || String(v) === String(option.value) || String(v) === String(option.name));
+        const swatch = option.hex || "#e5e7eb";
+        return '<label class="fopt color-opt" data-color-name="' + escapeHtml(String(option.name || "").toLowerCase()) + '">' +
+          '<input type="checkbox" data-filter-kind="color" value="' + escapeHtml(option.id || option.value) + '"' + (selected ? " checked" : "") + ">" +
+          '<span class="filter-swatch" style="background:' + escapeHtml(swatch) + '"></span>' +
+          '<span class="color-name">' + escapeHtml(option.name) + "</span>" +
+          '<small class="color-count">' + Number(option.count || 0) + "</small></label>";
+      }).join("") + "</div>" +
+      '<p class="filter-empty" data-role="filter-color-empty" hidden>No colours found</p>';
+  }
+  return '<div class="fopt-list">' + (group.options || []).map((option) => {
+    const selected = (draft[group.key] || []).some((v) => String(v) === String(option.id) || String(v) === String(option.value) || String(v) === String(option.name));
+    const swatch = option.hex ? '<span class="filter-swatch" style="background:' + escapeHtml(option.hex) + '"></span>' : "";
+    return '<label class="fopt"><input type="checkbox" data-filter-kind="' + escapeHtml(group.key) + '" value="' + escapeHtml(option.id || option.value) + '"' + (selected ? " checked" : "") + ">" + swatch +
+      '<span>' + escapeHtml(option.name) + '</span><small>' + Number(option.count || 0) + "</small></label>";
+  }).join("") + "</div>";
+}
+
+function renderFilterPanel() {
+  const host = $("#filter-panel-root");
+  const filterData = state.filterData;
+  if (!host || !filterData) return;
+  const draft = state.filterDraft;
+  const groups = filterData.groups || [];
+  if (!groups.length) {
+    host.innerHTML = '<div class="filter-screen"><div class="filter-screen-head"><button class="filter-close" data-action="close-filters" aria-label="Close">\u00D7</button><div><h2>Filters</h2><p>No filter groups are enabled.</p></div><span></span></div></div>';
+    return;
+  }
+  if (!groups.some((g) => g.key === state.filterGroup)) state.filterGroup = groups[0].key;
+  const nav = groups.map((group) => {
+    const count = filterGroupSelectionCount(group, draft);
+    return '<button type="button" class="filter-nav-item' + (group.key === state.filterGroup ? " active" : "") + '" data-action="filter-group" data-key="' + escapeHtml(group.key) + '"><span>' + escapeHtml(group.label) + '</span><b data-nav-count="' + escapeHtml(group.key) + '">' + (count || "") + "</b></button>";
+  }).join("");
+  const panels = groups.map((group) =>
+    '<section class="filter-panel' + (group.key === state.filterGroup ? " active" : "") + '" data-panel="' + escapeHtml(group.key) + '">' +
+      "<h3>" + escapeHtml(group.label) + "</h3>" + filterGroupContent(group, draft) + "</section>"
+  ).join("");
+  host.innerHTML = '<div class="filter-screen" data-role="filter-screen">' +
+    '<div class="filter-screen-head"><button class="filter-close" data-action="close-filters" aria-label="Close">\u00D7</button>' +
+    '<div><h2>Filters</h2><p><span data-role="filter-total">' + Number(filterData.total || 0) + "</span> products match</p></div>" +
+    '<button type="button" class="link-btn" data-action="clear-filter-draft">Clear all</button></div>' +
+    '<div class="filter-screen-body"><nav class="filter-nav">' + nav + "</nav><div class=\"filter-panels\">" + panels + "</div></div>" +
+    '<div class="filter-screen-cta"><div><strong data-role="filter-total">' + Number(filterData.total || 0) + '</strong> products</div><button type="button" class="btn primary" data-action="apply-filters">See ' + Number(filterData.total || 0) + " products</button></div>" +
+    "</div>";
+  document.body.classList.add("filters-open");
+}
+
+async function refreshFilterTotal() {
+  const draft = state.filterDraft;
+  if (!draft) return;
+  if (state.filterTotalTimer) clearTimeout(state.filterTotalTimer);
+  state.filterTotalTimer = setTimeout(async () => {
+    try {
+      const params = draftToParams(draft);
+      params.set("limit", "1");
+      const data = await api("/api/products?" + params.toString(), { auth: false });
+      const total = Number(data.total) || 0;
+      $$('[data-role="filter-total"]').forEach((el) => { el.textContent = total; });
+      const apply = $('[data-action="apply-filters"]');
+      if (apply) apply.textContent = "See " + total + " product" + (total === 1 ? "" : "s");
+    } catch (e) { /* ignore live preview errors */ }
+  }, 220);
+}
+
 async function renderProducts(token, route) {
   const q = route.query;
-  const [catsRes, brandsRes] = await Promise.all([
-    api("/api/categories", { auth: false }).catch(() => ({ categories: [] })),
-    api("/api/brands", { auth: false }).catch(() => ({ brands: [] })),
-  ]);
   const params = new URLSearchParams();
-  ["q", "category", "sub", "brand", "minPrice", "maxPrice", "rating", "discount", "availability", "sort"].forEach((k) => {
+  ["q", "category", "sub", "brand", "gender", "color", "size", "age_group", "offers", "minPrice", "maxPrice", "rating", "discount", "newArrival", "sort"].forEach((k) => {
     if (q[k]) params.set(k, q[k]);
   });
+  const filterParams = new URLSearchParams(params.toString());
   params.set("limit", "60");
-  const data = await api("/api/products?" + params.toString(), { auth: false });
+  const [catsRes, filterRes, data] = await Promise.all([
+    api("/api/categories", { auth: false }).catch(() => ({ categories: [] })),
+    api("/api/filters?" + filterParams.toString(), { auth: false }).catch(() => ({ total: 0, groups: [] })),
+    api("/api/products?" + params.toString(), { auth: false }),
+  ]);
   if (token !== renderToken) return;
   state.categories = catsRes.categories || [];
+  state.filterData = filterRes || { total: 0, groups: [] };
+  state.filterDraft = draftFromQuery(q);
+  normalizeDraftIds(state.filterData, state.filterDraft);
+  state.filterGroup = "sort";
   state.listing = {
     base: params.toString(),
     page: 1,
@@ -539,48 +764,26 @@ async function renderProducts(token, route) {
     loaded: (data.products || []).length,
     loading: false,
   };
-  const brands = brandsRes.brands || [];
 
-  const catOptions = '<option value="">All categories</option>' +
-    state.categories.map((c) => {
-      const subs = (c.subs || []).map((s) => '<option value="' + escapeHtml(s.slug) + '"' + (q.sub === s.slug ? " selected" : "") + ">&nbsp;&nbsp;\u21B3 " + escapeHtml(s.name) + "</option>").join("");
-      return '<option value="' + escapeHtml(c.slug) + '"' + (q.category === c.slug ? " selected" : "") + ">" + escapeHtml(c.name) + "</option>" + subs;
-    }).join("");
-  const brandOptions = '<option value="">All brands</option>' + brands.map((b) => '<option value="' + escapeHtml(b.name) + '"' + (q.brand === b.name ? " selected" : "") + ">" + escapeHtml(b.name) + "</option>").join("");
+  const draft = state.filterDraft;
+  const selectedCount = (state.filterData.groups || []).reduce((sum, group) => sum + filterGroupSelectionCount(group, draft), 0);
+  const chips = activeFilterChips(state.filterData, draft);
   const sortValue = q.sort || "popularity";
   const sortOptions = [
     ["popularity", "Popularity"], ["price-asc", "Price: Low to High"], ["price-desc", "Price: High to Low"],
     ["newest", "Newest First"], ["discount", "Discount"], ["rating", "Rating"],
   ].map(([v, l]) => '<option value="' + v + '"' + (sortValue === v ? " selected" : "") + ">" + l + "</option>").join("");
-
-  const active = [];
-  if (q.q) active.push('<a class="chip" href="#/products">\u2715 "' + escapeHtml(q.q) + '"</a>');
-  if (q.category) active.push('<span class="chip">' + escapeHtml(q.category) + "</span>");
-  if (q.sub) active.push('<span class="chip">' + escapeHtml(q.sub) + "</span>");
-  if (q.brand) active.push('<span class="chip">' + escapeHtml(q.brand) + "</span>");
-  if (q.rating) active.push('<span class="chip">' + q.rating + "\u2605 & up</span>");
-  if (q.discount) active.push('<span class="chip">' + q.discount + "%+ off</span>");
-  if (q.availability === "in") active.push('<span class="chip">In stock</span>');
-
   const title = q.q ? 'Search results for "' + escapeHtml(q.q) + '"' : (q.category ? escapeHtml(q.category) : "All Products");
 
   const html =
     '<div class="crumbs"><a href="#/">Home</a> \u203A ' + escapeHtml(title) + "</div>" +
     '<div class="page-head"><h1>' + title + '</h1><span class="muted small">' + data.total + " products</span></div>" +
-    '<div class="active-filters">' + active.join("") + "</div>" +
+    '<div class="active-filters">' + chips.join("") + "</div>" +
+    '<div class="listing-tools">' +
+      '<button type="button" class="btn secondary filter-trigger" data-action="open-filters">\u2699 Filters' + (selectedCount ? ' <span class="filter-badge">' + selectedCount + "</span>" : "") + "</button>" +
+      '<label class="sort-inline"><span class="muted small">Sort</span><select class="input" data-quick-sort>' + sortOptions + "</select></label>" +
+    "</div>" +
     '<div class="listing">' +
-      '<form class="filters" data-form="filters" id="filters-form">' +
-        '<input type="hidden" name="q" value="' + escapeHtml(q.q || "") + '">' +
-        '<div class="row between"><strong>Filters</strong><button type="button" class="link small" data-action="clear-filters">Clear all</button></div>' +
-        '<div class="filter-group"><h4>Sort by</h4><select class="input" name="sort">' + sortOptions + "</select></div>" +
-        '<div class="filter-group"><h4>Category</h4><select class="input" name="category">' + catOptions + "</select></div>" +
-        '<div class="filter-group"><h4>Brand</h4><select class="input" name="brand">' + brandOptions + "</select></div>" +
-        '<div class="filter-group"><h4>Price (\u20B9)</h4><div class="field-row"><input class="input" name="minPrice" type="number" min="0" placeholder="Min" value="' + escapeHtml(q.minPrice || "") + '"><input class="input" name="maxPrice" type="number" min="0" placeholder="Max" value="' + escapeHtml(q.maxPrice || "") + '"></div></div>' +
-        '<div class="filter-group"><h4>Customer rating</h4><select class="input" name="rating"><option value="">Any rating</option>' + [4, 3, 2].map((r) => '<option value="' + r + '"' + (q.rating === String(r) ? " selected" : "") + ">" + r + "\u2605 & above</option>").join("") + "</select></div>" +
-        '<div class="filter-group"><h4>Discount</h4><select class="input" name="discount"><option value="">Any discount</option>' + [10, 20, 30, 50].map((d) => '<option value="' + d + '"' + (q.discount === String(d) ? " selected" : "") + ">" + d + "% or more</option>").join("") + "</select></div>" +
-        '<div class="filter-group"><h4>Availability</h4><select class="input" name="availability"><option value="">All</option><option value="in"' + (q.availability === "in" ? " selected" : "") + ">In stock</option><option value=\"out\"" + (q.availability === "out" ? " selected" : "") + ">Out of stock</option></select></div>" +
-        '<button class="btn block" type="submit">Apply Filters</button>' +
-      "</form>" +
       '<div>' +
         (data.products.length
           ? '<div id="product-grid" class="product-grid">' + data.products.map(productCard).join("") + "</div>" +
@@ -589,13 +792,92 @@ async function renderProducts(token, route) {
               : "")
           : emptyView("\u{1F50E}", "No products found", "Try changing your filters or search keywords.", "#/products", "Clear filters")) +
       "</div>" +
-    "</div>";
+    "</div>" +
+    '<div id="filter-panel-root"></div>';
 
   $("#app").innerHTML = html;
-  const form = $("#filters-form");
-  if (form) {
-    form.querySelectorAll("select").forEach((sel) => sel.addEventListener("change", () => form.requestSubmit()));
+}
+
+function updateFilterNavCounts() {
+  const draft = state.filterDraft;
+  const filterData = state.filterData;
+  if (!draft || !filterData) return;
+  (filterData.groups || []).forEach((group) => {
+    const el = $('[data-nav-count="' + group.key + '"]');
+    if (el) el.textContent = filterGroupSelectionCount(group, draft) || "";
+    const nav = $('.filter-nav-item[data-key="' + group.key + '"]');
+    if (nav) nav.classList.toggle("has-selection", filterGroupSelectionCount(group, draft) > 0);
+  });
+  refreshFilterTotal();
+}
+
+function selectFilterGroup(key) {
+  if (!key) return;
+  state.filterGroup = key;
+  $$(".filter-nav-item").forEach((el) => el.classList.toggle("active", el.dataset.key === key));
+  $$(".filter-panel").forEach((el) => el.classList.toggle("active", el.dataset.panel === key));
+}
+
+function openFilters() {
+  if (!state.filterDraft) return;
+  renderFilterPanel();
+}
+
+function closeFilters() {
+  document.body.classList.remove("filters-open");
+  const host = $("#filter-panel-root");
+  if (host) host.innerHTML = "";
+}
+
+function applyFilters() {
+  const draft = state.filterDraft;
+  if (!draft) return;
+  const params = draftToParams(draft);
+  closeFilters();
+  go("/products" + (params.toString() ? "?" + params.toString() : ""));
+}
+
+function syncFilterDraftFromInput(input) {
+  const draft = state.filterDraft;
+  if (!draft) return;
+  const kind = input.dataset.filterKind;
+  if (!kind) return;
+  if (kind === "newArrival") draft.newArrival = input.checked;
+  else if (kind === "sort") draft.sort = input.value || "popularity";
+  else if (input.type === "radio") draft[kind] = input.value;
+  else {
+    const list = draft[kind] || [];
+    const value = input.value;
+    draft[kind] = input.checked ? list.concat([value]) : list.filter((v) => String(v) !== String(value));
   }
+  const optionRow = input.closest(".brand-opt, .color-opt");
+  if (optionRow) optionRow.classList.toggle("selected", input.checked);
+  updateFilterNavCounts();
+}
+
+function syncFilterPrice(input) {
+  const draft = state.filterDraft;
+  if (!draft) return;
+  const which = input.dataset.filterPrice;
+  if (which === "min") draft.minPrice = input.value;
+  if (which === "max") draft.maxPrice = input.value;
+  updateFilterNavCounts();
+}
+
+function clearFilterDraft() {
+  const draft = state.filterDraft;
+  if (!draft) return;
+  state.filterDraft = {
+    q: draft.q,
+    category: draft.category,
+    sub: draft.sub,
+    sort: "popularity",
+    brand: [], gender: [], color: [], size: [], age_group: [], offers: [],
+    minPrice: "", maxPrice: "", rating: "", discount: "",
+    newArrival: false,
+  };
+  renderFilterPanel();
+  refreshFilterTotal();
 }
 
 /* ---------------------------------------------------------------------------
@@ -1335,6 +1617,19 @@ function openAddressModal(address) {
 async function handleAction(action, el) {
   const id = el.dataset.id;
 
+  if (action === "open-filters") { openFilters(); return; }
+  if (action === "close-filters") { closeFilters(); return; }
+  if (action === "filter-group") { selectFilterGroup(el.dataset.key); return; }
+  if (action === "clear-filter-draft") { clearFilterDraft(); return; }
+  if (action === "apply-filters") { applyFilters(); return; }
+  if (action === "filter-price-preset") {
+    state.filterDraft.minPrice = String(el.dataset.min || "");
+    state.filterDraft.maxPrice = String(el.dataset.max || "");
+    renderFilterPanel();
+    refreshFilterTotal();
+    return;
+  }
+
   if (action === "detect-location") {
     const form = el.closest("form");
     if (!form) return;
@@ -1638,6 +1933,42 @@ document.addEventListener("click", (e) => {
   const action = el.dataset.action;
   if (el.tagName === "A" && action === "banner-dot") e.preventDefault();
   handleAction(action, el).catch((err) => showToast(err.message || "Something went wrong", "error"));
+});
+
+document.addEventListener("change", (e) => {
+  const filterInput = e.target.closest("[data-filter-kind]");
+  if (filterInput) { syncFilterDraftFromInput(filterInput); return; }
+  const quickSort = e.target.closest("[data-quick-sort]");
+  if (quickSort && state.filterDraft) {
+    state.filterDraft.sort = quickSort.value;
+    const params = draftToParams(state.filterDraft);
+    go("/products" + (params.toString() ? "?" + params.toString() : ""));
+  }
+});
+
+document.addEventListener("input", (e) => {
+  const priceInput = e.target.closest("[data-filter-price]");
+  if (priceInput) { syncFilterPrice(priceInput); return; }
+  const brandSearch = e.target.closest('[data-role="filter-brand-search"]');
+  if (brandSearch) {
+    const term = brandSearch.value.trim().toLowerCase();
+    $$(".brand-opt").forEach((label) => {
+      label.hidden = term && String(label.dataset.brandName || "").indexOf(term) < 0;
+    });
+  }
+  const colorSearch = e.target.closest('[data-role="filter-color-search"]');
+  if (colorSearch) {
+    const term = colorSearch.value.trim().toLowerCase();
+    const panel = colorSearch.closest(".filter-panel");
+    let visible = 0;
+    $$(".color-opt", panel).forEach((label) => {
+      const match = !term || String(label.dataset.colorName || "").indexOf(term) >= 0;
+      label.hidden = !match;
+      if (match) visible++;
+    });
+    const empty = panel && panel.querySelector('[data-role="filter-color-empty"]');
+    if (empty) empty.hidden = visible > 0;
+  }
 });
 
 document.addEventListener("submit", async (e) => {
