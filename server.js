@@ -248,9 +248,10 @@ function serveFile(res, baseDir, relPath, options) {
     const useGzip = compressible && /\bgzip\b/i.test(accept) && stat.size > 1024;
     const etag = '"' + stat.size.toString(16) + "-" + Math.floor(stat.mtimeMs).toString(16) + '"';
     if (!isHtml) {
+      const normalizeEtag = (v) => String(v || "").replace(/^W\//, "").trim();
       const inm = String((req.headers && req.headers["if-none-match"]) || "");
       const ims = Date.parse(String((req.headers && req.headers["if-modified-since"]) || ""));
-      const notModified = (inm && inm.split(",").map((v) => v.trim()).indexOf(etag) >= 0) ||
+      const notModified = (inm && inm.split(",").map(normalizeEtag).indexOf(normalizeEtag(etag)) >= 0) ||
         (!inm && Number.isFinite(ims) && Math.floor(stat.mtimeMs / 1000) * 1000 <= ims);
       if (notModified) {
         res.writeHead(304, { ...SECURITY_HEADERS, ...cache, ETag: etag });
