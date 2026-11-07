@@ -567,8 +567,10 @@
 
       '<div class="section-title">Images</div>' +
       '<div class="image-list" data-role="images">' + imageRows + "</div>" +
-      '<div class="upload-box">Upload images (PNG, JPG, GIF or WEBP \u00B7 max 4 MB each)' +
-      '<input type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple data-action="upload-images"></div>' +
+      '<label class="upload-box upload-dropzone" data-dropzone="product-images">' +
+      '<span class="dropzone-title">Drag &amp; drop images here</span>' +
+      '<span class="dropzone-sub">or click to browse \u00B7 PNG, JPG, GIF or WEBP \u00B7 max 4 MB each</span>' +
+      '<input type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple data-action="upload-images"></label>' +
 
       '<div class="section-title">Variants</div>' +
       '<div class="rows" data-role="variants">' + variantRows + "</div>" +
@@ -1760,6 +1762,39 @@
     }
   });
 
+  function productDropzone(target) {
+    return target && target.closest ? target.closest('[data-dropzone="product-images"]') : null;
+  }
+
+  document.addEventListener("dragenter", function (event) {
+    var zone = productDropzone(event.target);
+    if (!zone) return;
+    event.preventDefault();
+    zone.classList.add("dragover");
+  });
+
+  document.addEventListener("dragover", function (event) {
+    var zone = productDropzone(event.target);
+    if (!zone) return;
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+    zone.classList.add("dragover");
+  });
+
+  document.addEventListener("dragleave", function (event) {
+    var zone = productDropzone(event.target);
+    if (zone && !zone.contains(event.relatedTarget)) zone.classList.remove("dragover");
+  });
+
+  document.addEventListener("drop", function (event) {
+    var zone = productDropzone(event.target);
+    if (!zone) return;
+    event.preventDefault();
+    zone.classList.remove("dragover");
+    var files = Array.prototype.slice.call((event.dataTransfer && event.dataTransfer.files) || []);
+    uploadProductFiles(zone.closest("form"), files);
+  });
+
   window.addEventListener("hashchange", route);
 
   // ---------------------------------------------------------------------------
@@ -1830,14 +1865,14 @@
     });
   }
 
-  async function uploadImages(input) {
-    var form = input.form;
-    if (!form) return;
+  async function uploadProductFiles(form, files) {
+    if (!form || !files.length) return;
     var list = form.querySelector('[data-role="images"]');
-    var files = Array.prototype.slice.call(input.files || []);
-    if (!files.length) return;
+    if (!list) return;
     for (var i = 0; i < files.length; i++) {
       var file = files[i];
+      var isImage = /^image\/(png|jpe?g|gif|webp)$/i.test(file.type) || /\.(png|jpe?g|gif|webp)$/i.test(file.name);
+      if (!isImage) { toast(file.name + " is not a supported image.", "error"); continue; }
       if (file.size > 4 * 1024 * 1024) { toast(file.name + " is larger than 4 MB.", "error"); continue; }
       try {
         var dataUrl = await readFileAsDataUrl(file);
@@ -1846,6 +1881,13 @@
         toast("Uploaded " + file.name + ".", "success");
       } catch (err) { toast(err.message, "error"); }
     }
+  }
+
+  async function uploadImages(input) {
+    var form = input.form;
+    if (!form) return;
+    var files = Array.prototype.slice.call(input.files || []);
+    await uploadProductFiles(form, files);
     input.value = "";
   }
 
