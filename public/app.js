@@ -2234,6 +2234,8 @@ function setupSearch() {
   const runSearch = (value) => {
     const term = String(value || "").trim();
     if (!term) return;
+    clearTimeout(timer);
+    seq += 1;
     saveRecentSearch(term);
     hideSuggestions();
     input.value = term;
