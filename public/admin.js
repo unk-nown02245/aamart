@@ -850,7 +850,7 @@
         html += "<tr>" +
           "<td><strong>" + esc(r.productTitle || "\u2014") + "</strong></td>" +
           "<td>" + esc(r.name) + "</td>" +
-          '<td class="nowrap" style="color:#b45309">' + stars + "</td>" +
+          '<td class="nowrap" style="color:var(--amber)">' + stars + "</td>" +
           '<td style="max-width:280px"><strong>' + esc(r.title || "") + '</strong><br><span class="muted">' + esc(r.body || "") + "</span></td>" +
           "<td>" + statusBadge(r.status) + "</td>" +
           '<td class="nowrap muted">' + dateOnly(r.created_at) + "</td>" +

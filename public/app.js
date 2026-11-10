@@ -671,7 +671,7 @@ function filterGroupContent(group, draft) {
       '<div class="fopt-list color-list" data-role="filter-color-list">' +
       (group.options || []).map((option) => {
         const selected = (draft.color || []).some((v) => String(v) === String(option.id) || String(v) === String(option.value) || String(v) === String(option.name));
-        const swatch = option.hex || "#e5e7eb";
+        const swatch = option.hex || "var(--border-color)";
         return '<label class="fopt color-opt" data-color-name="' + escapeHtml(String(option.name || "").toLowerCase()) + '">' +
           '<input type="checkbox" data-filter-kind="color" value="' + escapeHtml(option.id || option.value) + '"' + (selected ? " checked" : "") + ">" +
           '<span class="filter-swatch" style="background:' + escapeHtml(swatch) + '"></span>' +
@@ -1231,7 +1231,7 @@ async function renderSuccess(token, id) {
       '<div style="font-size:56px">\u2705</div>' +
       '<h1 style="font-size:22px;font-weight:800;margin-top:8px">Order placed successfully!</h1>' +
       '<p class="muted">Thank you for shopping with Aamart. Your order has been confirmed.</p>' +
-      '<div class="card" style="text-align:left;margin:14px 0;background:#f8faff">' +
+      '<div class="card" style="text-align:left;margin:14px 0;background:var(--bg-hover)">' +
         '<div class="sum-row"><span>Order ID</span><strong>' + escapeHtml(o.orderNo) + "</strong></div>" +
         '<div class="sum-row"><span>Payment</span><span>' + escapeHtml(o.payment.method) + "</span></div>" +
         '<div class="sum-row"><span>Status</span><span class="status ' + statusClass(o.status) + '">' + escapeHtml(o.status) + "</span></div>" +

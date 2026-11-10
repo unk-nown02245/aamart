@@ -32,7 +32,7 @@ const UPLOAD_DIR = path.join(ROOT, "uploads");
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
 const ASSET_VERSION = (() => {
-  const files = ["public/app.js", "public/style.css", "public/admin.js", "public/admin.css", "public/admin-login.js"];
+  const files = ["public/app.js", "public/style.css", "public/admin.js", "public/admin.css", "public/admin-login.js", "public/theme.js"];
   return crypto.createHash("sha256").update(files.map((rel) => {
     try {
       const stat = fs.statSync(path.join(ROOT, rel));
