@@ -13,8 +13,11 @@
     view: "",
     products: [],
     orders: [],
+    dashboardRange: "7d",
     cache: {},
   };
+  var searchRequest = 0;
+  var searchTimer = null;
 
   var STATUS_FLOW = ["Ordered", "Packed", "Shipped", "Out for Delivery", "Delivered"];
 
@@ -27,18 +30,18 @@
   ];
 
   var NAV = [
-    { id: "dashboard", label: "Dashboard", icon: "dashboard", roles: ["super", "manager"], section: "Manage" },
+    { id: "dashboard", label: "Dashboard", icon: "dashboard", roles: ["super", "manager"], section: "Store" },
     { id: "products", label: "Products", icon: "products", roles: ["super", "manager"] },
     { id: "orders", label: "Orders", icon: "orders", roles: ["super", "manager"] },
     { id: "reviews", label: "Reviews", icon: "reviews", roles: ["super", "manager"] },
-    { id: "categories", label: "Categories", icon: "categories", roles: ["super"], section: "Store setup" },
+    { id: "categories", label: "Categories", icon: "categories", roles: ["super"], section: "Catalogue" },
     { id: "brands", label: "Brands", icon: "brands", roles: ["super"] },
     { id: "filters", label: "Filters", icon: "filters", roles: ["super"] },
     { id: "banners", label: "Banners", icon: "banners", roles: ["super"] },
     { id: "coupons", label: "Coupons", icon: "coupons", roles: ["super"] },
-    { id: "customers", label: "Customers", icon: "customers", roles: ["super"], section: "People" },
+    { id: "customers", label: "Customers", icon: "customers", roles: ["super"], section: "Management" },
     { id: "admins", label: "Admins", icon: "admins", roles: ["super"] },
-    { id: "settings", label: "Settings", icon: "settings", roles: ["super"], section: "System" },
+    { id: "settings", label: "Settings", icon: "settings", roles: ["super"] },
     { id: "inventory", label: "Inventory", icon: "inventory", roles: ["super"] },
     { id: "logs", label: "Activity logs", icon: "logs", roles: ["super"] },
   ];
@@ -76,6 +79,24 @@
     inventory: '<path d="M12 2l9 5-9 5-9-5 9-5z"/><path d="M3 7v10l9 5 9-5V7"/><path d="M12 12v10"/>',
     logs: '<path d="M8 6h13M8 12h13M8 18h13"/><circle cx="3.5" cy="6" r="1"/><circle cx="3.5" cy="12" r="1"/><circle cx="3.5" cy="18" r="1"/>',
     search: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>',
+    cart: '<circle cx="9" cy="20" r="1.5"/><circle cx="18" cy="20" r="1.5"/><path d="M3 4h2l2.4 11.2a2 2 0 002 1.6h8.8a2 2 0 002-1.6L22 7H6"/>',
+    clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+    check: '<circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.7 2.7L16 9.8"/>',
+    box: '<path d="M21 8l-9-5-9 5 9 5 9-5z"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/>',
+    star: '<path d="M12 3l2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-2.9-5.6 2.9 1.1-6.2L3 9.6l6.2-.9L12 3z"/>',
+    chart: '<path d="M4 19V5"/><path d="M4 19h16"/><path d="M7 15l4-4 3 2 5-6"/>',
+    bell: '<path d="M18 8a6 6 0 10-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10.5 21h3"/>',
+    plus: '<path d="M12 5v14M5 12h14"/>',
+    image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9" r="1.5"/><path d="M21 15l-5-5L5 20"/>',
+    tag: '<path d="M20.6 13.4l-7.2 7.2a2 2 0 01-2.8 0L3 13V4h9l8.6 8.6a1 1 0 010 1.4z"/><circle cx="7.5" cy="7.5" r="1.2"/>',
+    arrowRight: '<path d="M5 12h14"/><path d="M13 6l6 6-6 6"/>',
+    bag: '<path d="M6 8h12l-1 12H7L6 8z"/><path d="M9 8V6a3 3 0 016 0v2"/>',
+    refresh: '<path d="M20 11a8 8 0 10-2.3 5.7"/><path d="M20 4v7h-7"/>',
+    chevron: '<path d="M6 9l6 6 6-6"/>',
+    lock: '<rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 018 0v3"/>',
+    logout: '<path d="M10 17l5-5-5-5"/><path d="M15 12H3"/><path d="M21 4v16"/>',
+    store: '<path d="M4 10v10h16V10"/><path d="M3 10l2-6h14l2 6"/><path d="M8 20v-6h8v6"/>',
+    spark: '<path d="M4 17l4-5 3 2 4-7 5 4"/>',
   };
 
   // ---------------------------------------------------------------------------
@@ -132,8 +153,9 @@
     return role === "super" ? "Super Admin" : "Manager";
   }
 
-  function icon(name) {
-    return '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (ICONS[name] || "") + "</svg>";
+  function icon(name, size) {
+    var s = size || 18;
+    return '<svg viewBox="0 0 24 24" width="' + s + '" height="' + s + '" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (ICONS[name] || "") + "</svg>";
   }
 
   function getCookie(name) {
@@ -223,27 +245,196 @@
     var lastSection = "";
     items.forEach(function (n) {
       if (n.section && n.section !== lastSection) {
-        if (lastSection) html += '<div class="nav-sep"></div>';
         html += '<div class="nav-label">' + esc(n.section) + "</div>";
         lastSection = n.section;
       }
       html += '<a class="nav-item" href="#/' + n.id + '" data-view="' + n.id + '">' + icon(n.icon) + "<span>" + esc(n.label) + "</span></a>";
     });
+    html += '<div class="nav-label">Account</div>' +
+      '<a class="nav-item" href="/" target="_blank" rel="noopener">' + icon("store") + "<span>View Storefront</span></a>" +
+      '<button class="nav-item nav-action" type="button" data-action="change-password">' + icon("lock") + "<span>Change Password</span></button>" +
+      '<button class="nav-item nav-action" type="button" data-action="logout">' + icon("logout") + "<span>Sign Out</span></button>";
     nav.innerHTML = html;
   }
 
   function setActiveNav() {
-    $$(".nav-item").forEach(function (a) {
+    $$(".nav-item[data-view]").forEach(function (a) {
       a.classList.toggle("active", a.getAttribute("data-view") === state.view);
     });
   }
 
+  function initials(name) {
+    return String(name || "A").trim().split(/\s+/).slice(0, 2).map(function (part) {
+      return part.charAt(0);
+    }).join("").toUpperCase() || "A";
+  }
+
   function setAdminChrome() {
     var admin = state.admin;
-    var roleEl = $("#role-label");
+    var name = admin.name || admin.username || "Admin";
+    var avatar = $("#admin-avatar");
+    if (avatar) avatar.textContent = initials(name);
+    var nameEl = $("#admin-name");
+    if (nameEl) nameEl.textContent = name;
+    var roleEl = $("#admin-role");
     if (roleEl) roleEl.textContent = roleLabel(admin.role);
     var chip = $("#admin-chip");
-    if (chip) chip.innerHTML = '<span class="dot"></span>' + esc(admin.name || admin.username) + " \u00B7 " + esc(roleLabel(admin.role));
+    if (chip) chip.innerHTML = '<span class="dot"></span>' + esc(name) + " \u00B7 " + esc(roleLabel(admin.role));
+  }
+
+  function closeNotifications() {
+    var panel = $("#notif-panel");
+    var btn = $("#notif-btn");
+    if (panel) panel.hidden = true;
+    if (btn) btn.setAttribute("aria-expanded", "false");
+  }
+
+  function closeAdminMenu() {
+    var panel = $("#admin-menu-panel");
+    var btn = $("#admin-menu-btn");
+    if (panel) panel.hidden = true;
+    if (btn) btn.setAttribute("aria-expanded", "false");
+  }
+
+  function closeSearchResults() {
+    var results = $("#search-results");
+    if (!results) return;
+    results.hidden = true;
+    results.innerHTML = "";
+  }
+
+  async function toggleNotifications() {
+    var panel = $("#notif-panel");
+    var btn = $("#notif-btn");
+    if (!panel || !btn) return;
+    if (!panel.hidden) { closeNotifications(); return; }
+    closeAdminMenu();
+    closeSearchResults();
+    panel.hidden = false;
+    btn.setAttribute("aria-expanded", "true");
+    panel.innerHTML = '<div class="panel-head"><strong>Notifications</strong><small>Checking for updates\u2026</small></div>';
+    try {
+      var stats = state.cache.dashboardStats;
+      if (!stats) stats = await api("/api/admin/stats?range=" + encodeURIComponent(state.dashboardRange));
+      state.cache.dashboardStats = stats;
+      updateNotificationBadge(stats);
+      panel.innerHTML = notificationsHtml(stats);
+    } catch (err) {
+      panel.innerHTML = '<div class="panel-head"><strong>Notifications</strong><small>Unable to load notifications.</small></div>';
+    }
+  }
+
+  function notificationsHtml(stats) {
+    var items = [
+      { count: stats.pendingOrders, label: "Pending orders", note: "Awaiting fulfilment", href: "#/orders", icon: "clock", tone: "purple" },
+      { count: stats.pendingReviews, label: "Pending reviews", note: "Waiting for moderation", href: "#/reviews", icon: "star", tone: "pink" },
+      { count: stats.lowStock, label: "Low stock products", note: "At or below the stock threshold", href: "#/products", icon: "box", tone: "orange" },
+      { count: stats.outOfStock, label: "Out of stock products", note: "Needs restocking", href: "#/products", icon: "box", tone: "red" },
+    ].filter(function (item) { return Number(item.count || 0) > 0; });
+    var html = '<div class="panel-head"><strong>Notifications</strong><small>Live items that need attention.</small></div>';
+    if (!items.length) return html + '<div class="search-empty">You\u2019re all caught up.</div>';
+    return html + items.map(function (item) {
+      return '<a class="notif-item" href="' + item.href + '" data-action="close-notifications">' +
+        '<span class="notif-item-icon ' + item.tone + '">' + icon(item.icon, 16) + "</span>" +
+        '<span class="notif-item-body"><strong>' + esc(item.label) + "</strong><small>" + esc(item.note) + "</small></span>" +
+        '<span class="notif-item-count">' + num(item.count) + "</span></a>";
+    }).join("");
+  }
+
+  function toggleAdminMenu() {
+    var panel = $("#admin-menu-panel");
+    var btn = $("#admin-menu-btn");
+    if (!panel || !btn) return;
+    var open = panel.hidden;
+    closeNotifications();
+    closeSearchResults();
+    panel.hidden = !open;
+    btn.setAttribute("aria-expanded", open ? "true" : "false");
+  }
+
+  function bindTopbar() {
+    var input = $("#global-search");
+    if (!input) return;
+    input.addEventListener("input", function () {
+      var term = input.value.trim();
+      clearTimeout(searchTimer);
+      if (!term) { closeSearchResults(); return; }
+      searchTimer = setTimeout(function () { runGlobalSearch(term); }, 220);
+    });
+    input.addEventListener("keydown", function (event) {
+      if (event.key === "Escape") {
+        input.value = "";
+        closeSearchResults();
+        input.blur();
+      } else if (event.key === "Enter") {
+        event.preventDefault();
+        var first = $("#search-results .search-result");
+        if (first) first.click();
+      }
+    });
+    document.addEventListener("keydown", function (event) {
+      if ((event.ctrlKey || event.metaKey) && String(event.key).toLowerCase() === "k") {
+        event.preventDefault();
+        input.focus();
+        input.select();
+      }
+    });
+  }
+
+  async function runGlobalSearch(term) {
+    var results = $("#search-results");
+    if (!results) return;
+    var seq = ++searchRequest;
+    results.hidden = false;
+    results.innerHTML = '<div class="search-empty">Searching\u2026</div>';
+    try {
+      var data = await Promise.all([
+        api("/api/admin/products?limit=5&q=" + encodeURIComponent(term)),
+        api("/api/admin/orders?q=" + encodeURIComponent(term)),
+      ]);
+      if (seq !== searchRequest) return;
+      var products = data[0].products || [];
+      var orders = (data[1].orders || []).slice(0, 4);
+      state.cache.searchOrders = data[1].orders || [];
+      var html = "";
+      if (products.length) {
+        html += '<div class="search-group-label">Products</div>' + products.map(function (p) {
+          return '<button class="search-result" type="button" data-action="search-product" data-id="' + esc(p.id) + '">' +
+            '<img src="' + esc(p.image || "/img/placeholder.svg") + '" alt="">' +
+            '<span class="search-result-main"><strong>' + esc(p.title) + "</strong><small>" + esc(p.categoryName || p.category || "Uncategorised") +
+            (p.sku ? " \u00B7 " + esc(p.sku) : "") + '</small></span><span class="search-result-meta">' + money(p.price) + "</span></button>";
+        }).join("");
+      }
+      if (orders.length) {
+        html += '<div class="search-group-label">Orders</div>' + orders.map(function (o) {
+          return '<button class="search-result" type="button" data-action="search-order" data-id="' + esc(o.id) + '">' +
+            '<span class="search-result-icon">' + icon("orders", 16) + "</span>" +
+            '<span class="search-result-main"><strong>' + esc(o.orderNo) + "</strong><small>" + esc(o.customer && o.customer.name) +
+            (o.customer && o.customer.phone ? " \u00B7 " + esc(o.customer.phone) : "") + '</small></span><span class="search-result-meta">' + money(o.payable) + "</span></button>";
+        }).join("");
+      }
+      results.innerHTML = html || '<div class="search-empty">No results for \u201C' + esc(term) + '\u201D.</div>';
+    } catch (err) {
+      if (seq !== searchRequest) return;
+      results.innerHTML = '<div class="search-empty">' + esc(err.message || "Search failed.") + "</div>";
+    }
+  }
+
+  async function openOrderById(id) {
+    var order = state.orders.filter(function (o) { return o.id === id; })[0] ||
+      (state.cache.searchOrders || []).filter(function (o) { return o.id === id; })[0];
+    if (!order) {
+      try {
+        var data = await api("/api/admin/orders");
+        order = (data.orders || []).filter(function (o) { return o.id === id; })[0];
+      } catch (err) {
+        toast(err.message, "error");
+        return;
+      }
+    }
+    if (!order) { toast("Order not found.", "error"); return; }
+    state.orders = [order];
+    openOrderModal(id);
   }
 
   function closeSidebar() {
@@ -297,6 +488,7 @@
     var sub = $("#page-sub");
     if (title) title.textContent = meta.title;
     if (sub) sub.textContent = meta.sub;
+    document.title = meta.title + " - Aamart Admin";
     setActiveNav();
     closeSidebar();
 
@@ -408,39 +600,230 @@
   // Dashboard
   // ---------------------------------------------------------------------------
   async function viewDashboard() {
-    var stats = await api("/api/admin/stats");
-    var recent = stats.recentOrders || [];
-    var html = pageHead("Store overview", "Live figures from your database");
+    var range = state.dashboardRange || "7d";
+    var stats = await api("/api/admin/stats?range=" + encodeURIComponent(range));
+    state.cache.dashboardStats = stats;
+    state.orders = stats.recentOrders || [];
+    updateNotificationBadge(stats);
 
-    html += '<div class="stats-grid">' +
-      statCard("Total sales", money(stats.totalSales), stats.totalOrders + " orders", "") +
-      statCard("Pending", num(stats.pendingOrders), "awaiting fulfilment", "amber") +
-      statCard("Delivered", num(stats.deliveredOrders), "completed orders", "green") +
-      statCard("Customers", num(stats.customers), "registered users", "") +
-      statCard("Products", num(stats.products), stats.lowStock + " low \u00B7 " + stats.outOfStock + " out of stock", "blue") +
-      statCard("Reviews", num(stats.pendingReviews), "pending moderation", stats.pendingReviews ? "red" : "green") +
-      "</div>";
-
-    html += '<div class="card"><div class="card-head"><h3>Recent orders</h3><a class="link-btn" href="#/orders">View all orders</a></div>';
-    if (!recent.length) {
-      html += emptyState("No orders yet", "New customer orders will appear here.");
-    } else {
-      html += '<div class="table-wrap"><table class="data"><thead><tr><th>Order</th><th>Customer</th><th>Total</th><th>Status</th><th>Placed</th></tr></thead><tbody>';
-      recent.forEach(function (o) {
-        html += "<tr><td><strong>" + esc(o.orderNo) + "</strong></td><td>" + esc(o.customer && o.customer.name) +
-          "<br><small class=\"muted\">" + esc(o.customer && o.customer.phone) + "</small></td><td class=\"mono\">" + money(o.payable) +
-          "</td><td>" + statusBadge(o.status) + "</td><td class=\"nowrap muted\">" + dt(o.createdAt) + "</td></tr>";
-      });
-      html += "</tbody></table></div>";
-    }
-    html += "</div>";
-
+    var html = dashboardHeader(stats) + statsGrid(stats) +
+      '<div class="dash-grid">' + salesCard(stats) + recentOrdersCard(stats) + "</div>" +
+      quickActionsCard() +
+      '<div class="dash-bottom">' + topProductsCard(stats) + lowStockCard(stats) + "</div>";
     $("#view").innerHTML = html;
   }
 
-  function statCard(label, value, note, tone) {
-    return '<div class="stat ' + (tone || "") + '"><div class="stat-label">' + esc(label) + '</div><div class="stat-value">' +
-      value + '</div><div class="stat-note">' + esc(note || "") + "</div></div>";
+  function dashboardHeader(stats) {
+    var adminName = (state.admin && (state.admin.name || state.admin.username)) || "Admin";
+    var generated = stats.generatedAt ? new Date(stats.generatedAt) : new Date();
+    var updated = isNaN(generated.getTime()) ? "\u2014" : generated.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
+    return '<div class="dash-head">' +
+      '<div class="dash-head-left"><span class="dash-title-icon">' + icon("chart", 20) + "</span>" +
+      "<div><h2>Dashboard</h2><p>Welcome back, " + esc(adminName) + "! Here's your store overview.</p></div></div>" +
+      '<div class="dash-head-right">' +
+      '<span class="store-status"><span class="dot"></span>Store Online</span>' +
+      '<span class="dash-divider"></span>' +
+      '<span>Last updated <strong>' + esc(updated) + "</strong></span>" +
+      '<button class="refresh-btn" type="button" data-action="dashboard-refresh">' + icon("refresh", 14) + "Refresh</button>" +
+      "</div></div>";
+  }
+
+  function statsGrid(stats) {
+    var series = stats.salesSeries || {};
+    return '<div class="stats-grid">' +
+      statCard("Total Sales", money(stats.totalSales), num(stats.totalOrders) + " orders", "blue", "cart", miniSparkline(series.revenue)) +
+      statCard("Pending Orders", num(stats.pendingOrders), "Awaiting fulfilment", "purple", "clock") +
+      statCard("Delivered Orders", num(stats.deliveredOrders), "Completed orders", "green", "check") +
+      statCard("Total Customers", num(stats.customers), "Registered users", "orange", "customers") +
+      statCard("Total Products", num(stats.products), num(stats.lowStock) + " low \u00B7 " + num(stats.outOfStock) + " out of stock", "cyan", "box") +
+      statCard("Pending Reviews", num(stats.pendingReviews), "Pending moderation", "pink", "star") +
+      "</div>";
+  }
+
+  function statCard(label, value, note, tone, iconName, extra) {
+    return '<div class="stat">' +
+      '<span class="stat-icon ' + esc(tone) + '">' + icon(iconName, 20) + "</span>" +
+      (extra || "") +
+      '<div class="stat-value">' + value + "</div>" +
+      '<div class="stat-label">' + esc(label) + "</div>" +
+      '<div class="stat-note">' + esc(note || "") + "</div></div>";
+  }
+
+  function miniSparkline(values) {
+    var data = (values || []).map(Number);
+    if (data.length < 2) return "";
+    var max = Math.max.apply(null, data.concat([0]));
+    if (!max) return "";
+    var w = 70;
+    var h = 30;
+    var points = data.map(function (value, i) {
+      var x = (i / (data.length - 1)) * w;
+      var y = h - 2 - (value / max) * (h - 4);
+      return x.toFixed(1) + "," + y.toFixed(1);
+    }).join(" ");
+    return '<svg class="stat-spark" width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + " " + h + '" fill="none" aria-hidden="true"><polyline points="' + points + '" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  }
+
+  function salesCard(stats) {
+    var series = stats.salesSeries || { range: "7d", labels: [], revenue: [], orders: [] };
+    var selected = series.range || state.dashboardRange;
+    var tabs = [["7d", "7 Days"], ["30d", "30 Days"], ["12m", "12 Months"]].map(function (pair) {
+      return '<button class="range-tab' + (selected === pair[0] ? " active" : "") + '" type="button" data-action="dashboard-range" data-range="' +
+        pair[0] + '" aria-pressed="' + (selected === pair[0] ? "true" : "false") + '">' + pair[1] + "</button>";
+    }).join("");
+    return '<section class="dash-card"><div class="dash-card-head"><div><h3>Sales Overview</h3><p>Your store performance over time.</p></div>' +
+      '<div class="range-tabs">' + tabs + "</div></div>" +
+      '<div class="chart-legend"><span><i class="revenue"></i>Revenue</span><span><i class="orders"></i>Orders</span></div>' +
+      '<div class="chart-wrap">' + salesChart(series) + "</div></section>";
+  }
+
+  function salesChart(series) {
+    var labels = series.labels || [];
+    var revenue = (series.revenue || []).map(Number);
+    var orders = (series.orders || []).map(Number);
+    var maxRevenue = Math.max.apply(null, revenue.concat([0]));
+    var maxOrders = Math.max.apply(null, orders.concat([0]));
+    if (!labels.length || !maxRevenue) {
+      return '<div class="chart-empty">' + icon("chart", 30) +
+        "<strong>No sales in this period</strong><span>Sales will appear here once orders start coming in.</span></div>";
+    }
+
+    var W = 620;
+    var H = 230;
+    var left = 48;
+    var right = 12;
+    var top = 14;
+    var bottom = 30;
+    var innerW = W - left - right;
+    var innerH = H - top - bottom;
+    var xAt = function (i) { return labels.length <= 1 ? left + innerW / 2 : left + (i / (labels.length - 1)) * innerW; };
+    var yRevenue = function (value) { return top + innerH - (value / maxRevenue) * innerH; };
+    var yOrders = function (value) { return top + innerH - (maxOrders ? (value / maxOrders) * innerH : 0); };
+    var svg = '<svg class="sales-chart" viewBox="0 0 ' + W + " " + H + '" role="img" aria-label="Sales overview chart">';
+
+    for (var g = 0; g <= 3; g += 1) {
+      var gy = top + (innerH / 3) * g;
+      var gv = maxRevenue * (1 - g / 3);
+      svg += '<line class="chart-grid-line" x1="' + left + '" y1="' + gy.toFixed(1) + '" x2="' + (W - right) + '" y2="' + gy.toFixed(1) + '"/>' +
+        '<text class="chart-axis-label" x="' + (left - 8) + '" y="' + (gy + 3).toFixed(1) + '" text-anchor="end">' + esc(moneyShort(gv)) + "</text>";
+    }
+
+    var tickStep = labels.length > 14 ? Math.ceil(labels.length / 6) : 1;
+    var tickIndexes = [];
+    for (var t = 0; t < labels.length; t += tickStep) tickIndexes.push(t);
+    if (tickIndexes[tickIndexes.length - 1] !== labels.length - 1) tickIndexes.push(labels.length - 1);
+    tickIndexes.forEach(function (i) {
+      var tx = xAt(i);
+      svg += '<line class="chart-grid-line" x1="' + tx.toFixed(1) + '" y1="' + top + '" x2="' + tx.toFixed(1) + '" y2="' + (top + innerH) + '"/>' +
+        '<text class="chart-axis-label" x="' + tx.toFixed(1) + '" y="' + (H - 8) + '" text-anchor="middle">' + esc(labels[i]) + "</text>";
+    });
+
+    var revenuePoints = revenue.map(function (value, i) { return xAt(i).toFixed(1) + "," + yRevenue(value).toFixed(1); });
+    svg += '<polygon class="chart-area" points="' + left + "," + (top + innerH) + " " + revenuePoints.join(" ") + " " + (W - right) + "," + (top + innerH) + '"/>';
+    svg += '<polyline class="chart-line-revenue" points="' + revenuePoints.join(" ") + '"/>';
+    if (maxOrders) {
+      svg += '<polyline class="chart-line-orders" points="' + orders.map(function (value, i) {
+        return xAt(i).toFixed(1) + "," + yOrders(value).toFixed(1);
+      }).join(" ") + '"/>';
+    }
+
+    revenue.forEach(function (value, i) {
+      svg += '<g class="chart-point"><circle cx="' + xAt(i).toFixed(1) + '" cy="' + yRevenue(value).toFixed(1) + '" r="3.2">' +
+        "<title>" + esc(labels[i]) + ": " + esc(money(value)) + "</title></circle></g>";
+    });
+    if (maxOrders) {
+      orders.forEach(function (value, i) {
+        svg += '<g class="chart-point orders"><circle cx="' + xAt(i).toFixed(1) + '" cy="' + yOrders(value).toFixed(1) + '" r="2.8">' +
+          "<title>" + esc(labels[i]) + ": " + num(value) + " orders</title></circle></g>";
+      });
+    }
+    return svg + "</svg>";
+  }
+
+  function moneyShort(value) {
+    var n = Number(value || 0);
+    if (n >= 10000000) return "\u20B9" + (n / 10000000).toFixed(1) + "Cr";
+    if (n >= 100000) return "\u20B9" + (n / 100000).toFixed(1) + "L";
+    if (n >= 1000) return "\u20B9" + (n / 1000).toFixed(1) + "k";
+    return "\u20B9" + Math.round(n);
+  }
+
+  function recentOrdersCard(stats) {
+    var recent = stats.recentOrders || [];
+    var body = "";
+    if (!recent.length) {
+      body = '<div class="recent-empty">' + icon("bag", 30) + "<strong>No orders yet.</strong><span>New customer orders will appear here.</span></div>";
+    } else {
+      body = '<div class="recent-table"><table><thead><tr><th>Order ID</th><th>Customer</th><th>Amount</th><th>Status</th><th>Date</th></tr></thead><tbody>' +
+        recent.map(function (o) {
+          return "<tr><td><button class=\"link-btn order-link\" type=\"button\" data-action=\"dashboard-order\" data-id=\"" + esc(o.id) + "\">" + esc(o.orderNo) + "</button></td>" +
+            '<td><span class="cust-name">' + esc(o.customer && o.customer.name) + '</span><span class="cust-phone">' + esc(o.customer && o.customer.phone) + "</span></td>" +
+            '<td class="mono amount">' + money(o.payable) + "</td><td>" + statusBadge(o.status) + "</td>" +
+            '<td class="muted nowrap">' + dateOnly(o.createdAt) + "</td></tr>";
+        }).join("") + "</tbody></table></div>";
+    }
+    return '<section class="dash-card"><div class="dash-card-head"><div><h3>Recent Orders</h3><p>Latest customer orders.</p></div>' +
+      '<a class="link-btn" href="#/orders">View All Orders</a></div>' + body + "</section>";
+  }
+
+  function quickActionsCard() {
+    return '<section class="dash-card quick-card">' +
+      '<div class="quick-head"><h3>Quick Actions</h3><p>Manage your store efficiently.</p></div>' +
+      '<div class="quick-actions">' +
+      '<button class="quick-action" type="button" data-action="new-product"><span class="quick-action-icon blue">' + icon("plus", 18) + '</span><span class="quick-action-body"><strong>Add Product</strong><small>Create a new product.</small></span>' + icon("arrowRight", 16) + "</button>" +
+      '<a class="quick-action" href="#/orders"><span class="quick-action-icon green">' + icon("cart", 18) + '</span><span class="quick-action-body"><strong>Manage Orders</strong><small>View all orders.</small></span>' + icon("arrowRight", 16) + "</a>" +
+      '<a class="quick-action" href="#/banners"><span class="quick-action-icon orange">' + icon("image", 18) + '</span><span class="quick-action-body"><strong>Upload Banner</strong><small>Add new banner.</small></span>' + icon("arrowRight", 16) + "</a>" +
+      '<a class="quick-action" href="#/coupons"><span class="quick-action-icon purple">' + icon("tag", 18) + '</span><span class="quick-action-body"><strong>Create Coupon</strong><small>Start a new offer.</small></span>' + icon("arrowRight", 16) + "</a>" +
+      "</div></section>";
+  }
+
+  function topProductsCard(stats) {
+    var products = stats.topProducts || [];
+    var body = "";
+    if (!products.length) {
+      body = '<div class="dash-empty"><strong>No product sales yet</strong>Top products will appear after orders are placed.</div>';
+    } else {
+      body = '<div class="dash-table"><table><thead><tr><th>Product</th><th>Category</th><th>Units Sold</th><th>Revenue</th></tr></thead><tbody>' +
+        products.map(function (p) {
+          var name = p.productId
+            ? '<button class="link-btn product-link" type="button" data-action="edit-product" data-id="' + esc(p.productId) + '"><strong>' + esc(p.title) + "</strong></button>"
+            : "<strong>" + esc(p.title) + "</strong>";
+          return '<tr><td><div class="product-cell"><img src="' + esc(p.image || "/img/placeholder.svg") + '" alt="">' +
+            "<div>" + name + "<small>" + esc(p.category || "Uncategorised") + "</small></div></div></td>" +
+            "<td>" + esc(p.category || "Uncategorised") + '</td><td class="mono">' + num(p.units) + '</td><td class="mono">' + money(p.revenue) + "</td></tr>";
+        }).join("") + "</tbody></table></div>";
+    }
+    return '<section class="dash-card"><div class="dash-card-head"><div><h3>Top Selling Products</h3><p>Best performing products.</p></div>' +
+      '<a class="link-btn" href="#/products">View All</a></div>' + body + "</section>";
+  }
+
+  function lowStockCard(stats) {
+    var products = stats.lowStockProducts || [];
+    var body = "";
+    if (!products.length) {
+      body = '<div class="dash-empty"><strong>All products are well stocked</strong>No products are below the inventory threshold.</div>';
+    } else {
+      body = '<div class="dash-table"><table><thead><tr><th>Product</th><th>Stock</th><th>Status</th></tr></thead><tbody>' +
+        products.map(function (p) {
+          var out = p.stock <= 0;
+          return '<tr><td><div class="product-cell"><img src="' + esc(p.image || "/img/placeholder.svg") + '" alt="">' +
+            "<div><strong>" + esc(p.title) + "</strong><small>" + esc(p.category || "Uncategorised") + "</small></div></div></td>" +
+            '<td class="mono stock-qty ' + (out ? "out" : "low") + '">' + num(p.stock) + "</td>" +
+            '<td><span class="stock-badge ' + (out ? "out" : "low") + '">' + (out ? "Out of Stock" : "Low Stock") + "</span></td></tr>";
+        }).join("") + "</tbody></table></div>";
+    }
+    return '<section class="dash-card"><div class="dash-card-head"><div><h3>Low Stock Products</h3><p>Products running out of stock.</p></div>' +
+      '<a class="link-btn" href="#/products">View All</a></div>' + body + "</section>";
+  }
+
+  function updateNotificationBadge(stats) {
+    var count = Number(stats.pendingOrders || 0) + Number(stats.pendingReviews || 0) + Number(stats.lowStock || 0) + Number(stats.outOfStock || 0);
+    var badge = $("#notif-count");
+    if (!badge) return;
+    badge.textContent = count > 99 ? "99+" : String(count);
+    badge.hidden = count === 0;
+    var btn = $("#notif-btn");
+    if (btn) btn.setAttribute("aria-label", count ? count + " items need attention" : "Notifications");
   }
 
   // ---------------------------------------------------------------------------
@@ -1622,6 +2005,10 @@
   // Event handling
   // ---------------------------------------------------------------------------
   document.addEventListener("click", function (event) {
+    if (!event.target.closest(".notif-wrap")) closeNotifications();
+    if (!event.target.closest(".admin-menu-wrap")) closeAdminMenu();
+    if (!event.target.closest(".global-search")) closeSearchResults();
+
     var el = event.target.closest("[data-action]");
     if (!el) return;
     var action = el.getAttribute("data-action");
@@ -1639,10 +2026,37 @@
       if (catForm) syncCategoryPreview(catForm);
       return;
     }
-    if (action === "change-password") { openPasswordModal(); return; }
-    if (action === "logout") { logout(); return; }
+    if (action === "change-password") { closeAdminMenu(); openPasswordModal(); return; }
+    if (action === "logout") { closeAdminMenu(); logout(); return; }
     if (action === "retry") { route(); return; }
     if (action === "toggle-menu") { toggleSidebar(); return; }
+    if (action === "toggle-notifications") { toggleNotifications(); return; }
+    if (action === "toggle-admin-menu") { toggleAdminMenu(); return; }
+    if (action === "close-notifications") { closeNotifications(); return; }
+    if (action === "dashboard-refresh") { route(); return; }
+    if (action === "dashboard-range") {
+      var nextRange = el.getAttribute("data-range");
+      if (["7d", "30d", "12m"].indexOf(nextRange) >= 0) {
+        state.dashboardRange = nextRange;
+        route();
+      }
+      return;
+    }
+    if (action === "dashboard-order") { openOrderById(id); return; }
+    if (action === "search-product") {
+      closeSearchResults();
+      var search = $("#global-search");
+      if (search) search.value = "";
+      openProductForm(id).catch(function (err) { toast(err.message, "error"); });
+      return;
+    }
+    if (action === "search-order") {
+      closeSearchResults();
+      var orderSearch = $("#global-search");
+      if (orderSearch) orderSearch.value = "";
+      openOrderById(id);
+      return;
+    }
 
     if (action === "new-product") { openProductForm(null).catch(function (e) { toast(e.message, "error"); }); return; }
     if (action === "edit-product") { openProductForm(id).catch(function (e) { toast(e.message, "error"); }); return; }
@@ -1969,6 +2383,7 @@
 
     renderNav();
     setAdminChrome();
+    bindTopbar();
     normalizePath();
 
     if (!location.hash) {

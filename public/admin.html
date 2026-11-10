@@ -16,14 +16,19 @@
         <span class="brand-mark" aria-hidden="true">A</span>
         <div>
           <strong>Aamart</strong>
-          <small id="role-label">Admin panel</small>
+          <small>Admin Panel</small>
         </div>
       </div>
       <nav class="sidebar-nav" id="nav"></nav>
-      <div class="sidebar-foot">
-        <a class="side-link" href="/" target="_blank" rel="noopener">View storefront &nearr;</a>
-        <button class="side-link" type="button" data-action="change-password">Change password</button>
-        <button class="side-link danger" type="button" data-action="logout">Sign out</button>
+      <div class="sidebar-promo">
+        <div class="sidebar-promo-head">
+          <span class="sidebar-promo-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8h12l-1 12H7L6 8z"/><path d="M9 8V6a3 3 0 016 0v2"/></svg>
+          </span>
+          <strong>Aamart</strong>
+        </div>
+        <p>Grow your store with Aamart.</p>
+        <a class="btn primary" href="/" target="_blank" rel="noopener">Visit Storefront</a>
       </div>
     </aside>
     <div class="sidebar-scrim" id="sidebar-scrim" hidden></div>
@@ -33,12 +38,34 @@
         <button class="icon-btn" type="button" id="menu-btn" aria-label="Open menu" aria-expanded="false">
           <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
         </button>
-        <div class="topbar-title">
-          <h1 id="page-title">Dashboard</h1>
-          <p id="page-sub"></p>
+        <div class="global-search" role="search">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+          <input type="search" id="global-search" placeholder="Search anything..." autocomplete="off" aria-label="Search products and orders">
+          <span class="search-shortcut" aria-hidden="true">Ctrl + K</span>
+          <div class="search-results" id="search-results" hidden></div>
         </div>
         <div class="topbar-right">
-          <span class="admin-chip" id="admin-chip"></span>
+          <div class="notif-wrap">
+            <button class="icon-action" type="button" id="notif-btn" data-action="toggle-notifications" aria-label="Notifications" aria-expanded="false">
+              <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 10-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10.5 21h3"/></svg>
+              <span class="notif-count" id="notif-count" hidden></span>
+            </button>
+            <div class="notif-panel" id="notif-panel" hidden></div>
+          </div>
+          <div class="admin-menu-wrap">
+            <button class="admin-menu" type="button" id="admin-menu-btn" data-action="toggle-admin-menu" aria-expanded="false">
+              <span class="admin-avatar" id="admin-avatar">A</span>
+              <span class="admin-menu-text">
+                <strong id="admin-name">Admin</strong>
+                <small id="admin-role">Super Admin</small>
+              </span>
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+            <div class="admin-menu-panel" id="admin-menu-panel" hidden>
+              <button class="admin-menu-item" type="button" data-action="change-password">Change password</button>
+              <button class="admin-menu-item danger" type="button" data-action="logout">Sign out</button>
+            </div>
+          </div>
         </div>
       </header>
       <main class="view" id="view" tabindex="-1">

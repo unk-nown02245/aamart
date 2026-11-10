@@ -1750,7 +1750,57 @@ async function handleApi(req, res, pathname, parsed) {
   if (seg[1] === "admin" && seg[2] === "stats" && method === "GET") {
     const admin = requireAdmin(req, res, ["super", "manager"]);
     if (!admin) return;
+    const requestedRange = sanitizeString(parsed.searchParams.get("range"), 8) || "7d";
+    const range = ["7d", "30d", "12m"].includes(requestedRange) ? requestedRange : "7d";
+    const now = new Date();
+    const keys = [];
+    const labels = [];
+    const labelByKey = {};
+
+    if (range === "12m") {
+      for (let i = 11; i >= 0; i -= 1) {
+        const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
+        const key = d.toISOString().slice(0, 7);
+        keys.push(key);
+        labels.push(d.toLocaleDateString("en-IN", { month: "short", year: "2-digit", timeZone: "UTC" }));
+        labelByKey[key] = labels[labels.length - 1];
+      }
+    } else {
+      const days = range === "30d" ? 30 : 7;
+      for (let i = days - 1; i >= 0; i -= 1) {
+        const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - i));
+        const key = d.toISOString().slice(0, 10);
+        keys.push(key);
+        labels.push(d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", timeZone: "UTC" }));
+        labelByKey[key] = labels[labels.length - 1];
+      }
+    }
+
+    const bucketExpr = range === "12m" ? "substr(created_at, 1, 7)" : "substr(created_at, 1, 10)";
+    const startAt = range === "12m" ? keys[0] + "-01T00:00:00.000Z" : keys[0] + "T00:00:00.000Z";
+    const bucketRows = db.prepare(
+      "SELECT " + bucketExpr + " AS bucket, COALESCE(SUM(payable),0) AS revenue, COUNT(*) AS orders " +
+      "FROM orders WHERE status != 'Cancelled' AND created_at >= ? GROUP BY bucket"
+    ).all(startAt);
+    const bucketMap = {};
+    bucketRows.forEach((row) => { bucketMap[row.bucket] = row; });
+
     const agg = db.prepare("SELECT COUNT(*) AS total, COALESCE(SUM(payable),0) AS revenue FROM orders WHERE status != 'Cancelled'").get();
+    const topProducts = db.prepare(
+      "SELECT p.id AS productId, COALESCE(NULLIF(p.title, ''), oi.name) AS title, " +
+      "(SELECT url FROM product_images pi WHERE pi.product_id = p.id ORDER BY pi.sort ASC, pi.id ASC LIMIT 1) AS image, " +
+      "COALESCE(c.name, '') AS category, SUM(oi.qty) AS units, SUM(oi.price * oi.qty) AS revenue " +
+      "FROM order_items oi JOIN orders o ON o.id = oi.order_id " +
+      "LEFT JOIN products p ON p.id = oi.product_id LEFT JOIN categories c ON c.id = p.category_id " +
+      "WHERE o.status != 'Cancelled' GROUP BY oi.product_id, oi.name ORDER BY units DESC, revenue DESC LIMIT 4"
+    ).all().map((row) => ({ ...row, units: Number(row.units || 0), revenue: Number(row.revenue || 0) }));
+    const lowStockProducts = db.prepare(
+      "SELECT p.id, p.title, p.stock, COALESCE(c.name, '') AS category, " +
+      "(SELECT url FROM product_images pi WHERE pi.product_id = p.id ORDER BY pi.sort ASC, pi.id ASC LIMIT 1) AS image " +
+      "FROM products p LEFT JOIN categories c ON c.id = p.category_id " +
+      "WHERE p.stock <= 5 ORDER BY p.stock ASC, p.title ASC LIMIT 4"
+    ).all().map((row) => ({ ...row, stock: Number(row.stock || 0) }));
+
     return json(res, {
       totalSales: agg.revenue,
       revenue: agg.revenue,
@@ -1763,7 +1813,17 @@ async function handleApi(req, res, pathname, parsed) {
       outOfStock: db.prepare("SELECT COUNT(*) AS c FROM products WHERE stock <= 0").get().c,
       customers: db.prepare("SELECT COUNT(*) AS c FROM users").get().c,
       pendingReviews: db.prepare("SELECT COUNT(*) AS c FROM reviews WHERE status = 'pending'").get().c,
-      recentOrders: db.prepare("SELECT * FROM orders ORDER BY created_at DESC LIMIT 6").all().map((r) => serializeOrder(r)),
+      recentOrders: db.prepare("SELECT * FROM orders ORDER BY created_at DESC LIMIT 5").all().map((r) => serializeOrder(r)),
+      salesSeries: {
+        range,
+        labels,
+        keys: keys.map((key) => labelByKey[key]),
+        revenue: keys.map((key) => Number((bucketMap[key] && bucketMap[key].revenue) || 0)),
+        orders: keys.map((key) => Number((bucketMap[key] && bucketMap[key].orders) || 0)),
+      },
+      topProducts,
+      lowStockProducts,
+      generatedAt: nowIso(),
     });
   }
 
