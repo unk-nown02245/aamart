@@ -1813,7 +1813,7 @@ async function handleApi(req, res, pathname, parsed) {
       outOfStock: db.prepare("SELECT COUNT(*) AS c FROM products WHERE stock <= 0").get().c,
       customers: db.prepare("SELECT COUNT(*) AS c FROM users").get().c,
       pendingReviews: db.prepare("SELECT COUNT(*) AS c FROM reviews WHERE status = 'pending'").get().c,
-      recentOrders: db.prepare("SELECT * FROM orders ORDER BY created_at DESC LIMIT 5").all().map((r) => serializeOrder(r)),
+      recentOrders: db.prepare("SELECT * FROM orders ORDER BY created_at DESC LIMIT 6").all().map((r) => serializeOrder(r)),
       salesSeries: {
         range,
         labels,

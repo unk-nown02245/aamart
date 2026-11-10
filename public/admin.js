@@ -30,18 +30,18 @@
   ];
 
   var NAV = [
-    { id: "dashboard", label: "Dashboard", icon: "dashboard", roles: ["super", "manager"], section: "Store" },
+    { id: "dashboard", label: "Dashboard", icon: "dashboard", roles: ["super", "manager"], section: "Manage" },
     { id: "products", label: "Products", icon: "products", roles: ["super", "manager"] },
     { id: "orders", label: "Orders", icon: "orders", roles: ["super", "manager"] },
     { id: "reviews", label: "Reviews", icon: "reviews", roles: ["super", "manager"] },
-    { id: "categories", label: "Categories", icon: "categories", roles: ["super"], section: "Catalogue" },
+    { id: "categories", label: "Categories", icon: "categories", roles: ["super"], section: "Store setup" },
     { id: "brands", label: "Brands", icon: "brands", roles: ["super"] },
     { id: "filters", label: "Filters", icon: "filters", roles: ["super"] },
     { id: "banners", label: "Banners", icon: "banners", roles: ["super"] },
     { id: "coupons", label: "Coupons", icon: "coupons", roles: ["super"] },
-    { id: "customers", label: "Customers", icon: "customers", roles: ["super"], section: "Management" },
+    { id: "customers", label: "Customers", icon: "customers", roles: ["super"], section: "People" },
     { id: "admins", label: "Admins", icon: "admins", roles: ["super"] },
-    { id: "settings", label: "Settings", icon: "settings", roles: ["super"] },
+    { id: "settings", label: "Settings", icon: "settings", roles: ["super"], section: "System" },
     { id: "inventory", label: "Inventory", icon: "inventory", roles: ["super"] },
     { id: "logs", label: "Activity logs", icon: "logs", roles: ["super"] },
   ];
@@ -781,7 +781,7 @@
     var products = stats.topProducts || [];
     var body = "";
     if (!products.length) {
-      body = '<div class="dash-empty"><strong>No product sales yet</strong>Top products will appear after orders are placed.</div>';
+      body = '<div class="dash-empty"><strong>No product sales yet</strong>Top products will appear here after orders are placed.</div>';
     } else {
       body = '<div class="dash-table"><table><thead><tr><th>Product</th><th>Category</th><th>Units Sold</th><th>Revenue</th></tr></thead><tbody>' +
         products.map(function (p) {

@@ -87,7 +87,7 @@
   --red: var(--red-text);
   --amber: var(--amber-text);
   --radius: 12px;
-  --sidebar-w: 245px;
+  --sidebar-w: 250px;
   --topbar-h: 68px;
 }
 
@@ -1153,7 +1153,9 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--blue); }
   border: 1px solid var(--border-color);
   border-radius: 12px;
   box-shadow: none;
+  transition: border-color 0.18s ease;
 }
+.dash-card:hover { border-color: var(--border-strong); }
 .dash-card-head {
   display: flex;
   align-items: flex-start;
