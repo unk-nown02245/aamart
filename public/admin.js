@@ -949,11 +949,13 @@
       "</div>" +
 
       '<div class="section-title">Images</div>' +
+      '<div class="image-drop-area" data-dropzone="product-images">' +
       '<div class="image-list" data-role="images">' + imageRows + "</div>" +
-      '<label class="upload-box upload-dropzone" data-dropzone="product-images">' +
+      '<label class="upload-box upload-dropzone">' +
       '<span class="dropzone-title">Drag &amp; drop images here</span>' +
       '<span class="dropzone-sub">or click to browse \u00B7 PNG, JPG, GIF or WEBP \u00B7 max 4 MB each</span>' +
       '<input type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple data-action="upload-images"></label>' +
+      "</div>" +
 
       '<div class="section-title">Variants</div>' +
       '<div class="rows" data-role="variants">' + variantRows + "</div>" +
@@ -2180,34 +2182,72 @@
     return target && target.closest ? target.closest('[data-dropzone="product-images"]') : null;
   }
 
-  document.addEventListener("dragenter", function (event) {
-    var zone = productDropzone(event.target);
+  function activeProductForm(target) {
+    if (!target || !target.closest) return null;
+    var root = target.closest("#modal-root");
+    return root ? root.querySelector('[data-form="product"]') : null;
+  }
+
+  function productDropTarget(target) {
+    var form = activeProductForm(target);
+    var zone = form ? form.querySelector('[data-dropzone="product-images"]') : productDropzone(target);
+    return { form: form, zone: zone };
+  }
+
+  function dragHasImageData(event) {
+    var types = event.dataTransfer && event.dataTransfer.types;
+    if (!types) return false;
+    var list = Array.prototype.slice.call(types);
+    return list.indexOf("Files") >= 0 || list.indexOf("text/uri-list") >= 0 || list.indexOf("text/html") >= 0;
+  }
+
+  function setProductDropState(zone, active) {
     if (!zone) return;
+    zone.classList.toggle("dragover", active);
+    var box = zone.querySelector(".upload-dropzone");
+    if (box) box.classList.toggle("dragover", active);
+  }
+
+  function clearProductDropState() {
+    $$(".image-drop-area.dragover, .upload-dropzone.dragover").forEach(function (el) {
+      el.classList.remove("dragover");
+    });
+  }
+
+  document.addEventListener("dragenter", function (event) {
+    var target = productDropTarget(event.target);
+    if ((!target.form && !target.zone) || !dragHasImageData(event)) return;
     event.preventDefault();
-    zone.classList.add("dragover");
+    setProductDropState(target.zone, true);
   });
 
   document.addEventListener("dragover", function (event) {
-    var zone = productDropzone(event.target);
-    if (!zone) return;
+    var target = productDropTarget(event.target);
+    if ((!target.form && !target.zone) || !dragHasImageData(event)) return;
     event.preventDefault();
     if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
-    zone.classList.add("dragover");
+    setProductDropState(target.zone, true);
   });
 
   document.addEventListener("dragleave", function (event) {
-    var zone = productDropzone(event.target);
-    if (zone && !zone.contains(event.relatedTarget)) zone.classList.remove("dragover");
+    var target = productDropTarget(event.target);
+    if (!target.zone) return;
+    if (target.zone.contains(event.relatedTarget) || (target.form && target.form.contains(event.relatedTarget))) return;
+    setProductDropState(target.zone, false);
   });
 
   document.addEventListener("drop", function (event) {
-    var zone = productDropzone(event.target);
-    if (!zone) return;
+    var target = productDropTarget(event.target);
+    if ((!target.form && !target.zone) || !dragHasImageData(event)) return;
     event.preventDefault();
-    zone.classList.remove("dragover");
+    clearProductDropState();
     var files = Array.prototype.slice.call((event.dataTransfer && event.dataTransfer.files) || []);
-    uploadProductFiles(zone.closest("form"), files);
+    var fallbackUrl = draggedImageUrl(event.dataTransfer);
+    uploadProductFiles(target.form || target.zone.closest("form"), files, fallbackUrl);
   });
+
+  document.addEventListener("dragend", clearProductDropState);
+  window.addEventListener("blur", clearProductDropState);
 
   window.addEventListener("hashchange", route);
 
@@ -2270,30 +2310,116 @@
     }
   }
 
-  function readFileAsDataUrl(file) {
+  function readFileAsDataUrl(file, label) {
     return new Promise(function (resolve, reject) {
       var reader = new FileReader();
       reader.onload = function () { resolve(reader.result); };
-      reader.onerror = function () { reject(new Error("Could not read " + file.name)); };
+      reader.onerror = function () { reject(new Error("Could not read " + (label || file.name || "image"))); };
       reader.readAsDataURL(file);
     });
   }
 
-  async function uploadProductFiles(form, files) {
-    if (!form || !files.length) return;
+  function imageMimeFromName(name) {
+    var match = /\.(png|jpe?g|gif|webp)$/i.exec(String(name || ""));
+    if (!match) return "";
+    var ext = match[1].toLowerCase();
+    return "image/" + (ext === "jpg" ? "jpeg" : ext);
+  }
+
+  function imageMimeFromBytes(bytes) {
+    if (bytes.length >= 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return "image/png";
+    if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
+    if (bytes.length >= 6 && bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46) return "image/gif";
+    if (bytes.length >= 12 && bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 && bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50) return "image/webp";
+    return "";
+  }
+
+  async function readImageFileAsDataUrl(file) {
+    var declared = /^image\/(png|jpe?g|gif|webp)$/i.test(file.type) ? file.type.toLowerCase().replace(/^image\/jpg$/i, "image/jpeg") : "";
+    var bytes = new Uint8Array(await file.arrayBuffer());
+    var mime = imageMimeFromBytes(bytes) || declared || imageMimeFromName(file.name);
+    if (!mime) return "";
+    return readFileAsDataUrl(new Blob([bytes], { type: mime }), file.name || "image");
+  }
+
+  function cleanImageUrl(value) {
+    var raw = String(value || "").trim();
+    if (!raw) return "";
+    if (/^data:image\/(?:png|jpe?g|gif|webp);base64,/i.test(raw)) return raw;
+    if (/^\/\//.test(raw)) raw = "https:" + raw;
+    try {
+      var url = new URL(raw, window.location.href);
+      if (url.protocol === "http:" || url.protocol === "https:") return url.href;
+    } catch (e) {}
+    return "";
+  }
+
+  function looksLikeImageUrl(url) {
+    if (/^data:image\//i.test(url)) return true;
+    try {
+      return /\.(png|jpe?g|gif|webp)(?:$|[?#])/i.test(new URL(url, window.location.href).pathname);
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function draggedImageUrl(dataTransfer) {
+    if (!dataTransfer) return "";
+    var candidates = [];
+    try {
+      var html = dataTransfer.getData("text/html");
+      if (html) {
+        var doc = new DOMParser().parseFromString(html, "text/html");
+        var img = doc.querySelector("img");
+        var src = img && (img.getAttribute("src") || img.getAttribute("data-src"));
+        if (src) candidates.push({ value: src, trusted: true });
+      }
+    } catch (e) {}
+    ["text/uri-list", "text/plain"].forEach(function (type) {
+      var value = "";
+      try { value = dataTransfer.getData(type); } catch (e) {}
+      if (!value) return;
+      value.split(/\r?\n/).forEach(function (line) {
+        line = line.trim();
+        if (line && line.charAt(0) !== "#") candidates.push({ value: line, trusted: false });
+      });
+    });
+    for (var i = 0; i < candidates.length; i++) {
+      var candidate = candidates[i];
+      var match = String(candidate.value).match(/https?:\/\/[^\s"'<>]+/i);
+      var url = cleanImageUrl(match ? match[0] : candidate.value);
+      if (url && (candidate.trusted || looksLikeImageUrl(url))) return url;
+    }
+    return "";
+  }
+
+  function addProductImageUrl(form, url) {
+    var list = form.querySelector('[data-role="images"]');
+    if (!list) return false;
+    list.insertAdjacentHTML("beforeend", imageRow(url));
+    return true;
+  }
+
+  async function uploadProductFiles(form, files, fallbackUrl) {
+    if (!form) return;
+    files = files || [];
     var list = form.querySelector('[data-role="images"]');
     if (!list) return;
+    var uploaded = 0;
     for (var i = 0; i < files.length; i++) {
       var file = files[i];
-      var isImage = /^image\/(png|jpe?g|gif|webp)$/i.test(file.type) || /\.(png|jpe?g|gif|webp)$/i.test(file.name);
-      if (!isImage) { toast(file.name + " is not a supported image.", "error"); continue; }
-      if (file.size > 4 * 1024 * 1024) { toast(file.name + " is larger than 4 MB.", "error"); continue; }
+      if (file.size > 4 * 1024 * 1024) { toast((file.name || "Image") + " is larger than 4 MB.", "error"); continue; }
       try {
-        var dataUrl = await readFileAsDataUrl(file);
+        var dataUrl = await readImageFileAsDataUrl(file);
+        if (!dataUrl) { toast((file.name || "Image") + " is not a supported image.", "error"); continue; }
         var res = await api("/api/admin/upload", { body: { data: dataUrl } });
         list.insertAdjacentHTML("beforeend", imageRow(res.url));
-        toast("Uploaded " + file.name + ".", "success");
+        uploaded++;
+        toast("Uploaded " + (file.name || "image") + ".", "success");
       } catch (err) { toast(err.message, "error"); }
+    }
+    if (!uploaded && fallbackUrl && addProductImageUrl(form, fallbackUrl)) {
+      toast("Image added from link.", "success");
     }
   }
 
